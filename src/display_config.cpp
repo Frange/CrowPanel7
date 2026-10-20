@@ -371,13 +371,13 @@ static void gt_diag() {
 
     auto dump_blk = [&](const char *name, uint16_t reg) {
         memset(blk, 0xEE, sizeof(blk));
-        Serial.printf("[DIAG] %-14s bloque: ", name);
-        if (gt_read(reg, blk, 8)) {
-            for (int i = 0; i < 8; i++) Serial.printf("%02X ", blk[i]);
-        } else {
-            Serial.print("FALLO");
-        }
-        Serial.println();
+        //Serial.printf("[DIAG] %-14s bloque: ", name);
+        //if (gt_read(reg, blk, 8)) {
+        //    for (int i = 0; i < 8; i++) Serial.printf("%02X ", blk[i]);
+        //} else {
+        //    Serial.print("FALLO");
+        //}
+        //Serial.println();
     };
 
     // Zona de ID de producto: debe verse 39 31 31 00 ("911")
@@ -390,13 +390,13 @@ static void gt_diag() {
     dump_blk("ST  0x814E", 0x814E);
 
     // La misma zona leida byte a byte (una transaccion por registro)
-    Serial.print("[DIAG] ST  0x814E  uno a uno: ");
-    for (uint16_t i = 0; i < 8; i++) {
-        uint8_t v = 0xEE;
-        if (gt_read(0x814E + i, &v, 1)) Serial.printf("%02X ", v);
-        else Serial.print("FF? ");
-    }
-    Serial.println();
+    //Serial.print("[DIAG] ST  0x814E  uno a uno: ");
+    //for (uint16_t i = 0; i < 8; i++) {
+        //uint8_t v = 0xEE;
+        //if (gt_read(0x814E + i, &v, 1)) Serial.printf("%02X ", v);
+        //else Serial.print("FF? ");
+    //}
+    //Serial.println();
 }
 
 // ---------------------------------------------------------------------------
@@ -443,11 +443,6 @@ void display_get_touch(
                 } else {
                     pressed = false;
                 }
-
-                Serial.printf(
-                    "[TOUCH] status=0x%02X puntos=%u x=%d y=%d\n",
-                    st, st & 0x0F, lx, ly
-                );
 
                 gt_write8(0x814E, 0);
             }

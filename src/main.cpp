@@ -1,7 +1,10 @@
+
 #include <Arduino.h>
+
 #include "display_config.h"
 #include "ui/ui_manager.h"
 #include "services/storage_service.h"
+#include "services/market_service.h"
 
 void setup()
 {
@@ -10,14 +13,16 @@ void setup()
 
     Serial.println("\n[BOOT] Inicio");
 
-    // 1. Inicializar pantalla, bus I2C y táctil.
+    // 1. Inicializar pantalla, bus y tactil.
     display_init();
 
-    // 2. Abrir Preferences antes de utilizar cualquier función
-    //    del servicio de almacenamiento.
+    // 2. Inicializar almacenamiento y WiFi.
     storage_init();
 
-    // 3. Crear las pantallas de LVGL.
+    // 3. Inicializar consultas de mercado en segundo plano.
+    market_service_init();
+
+    // 4. Crear la interfaz.
     ui_init();
 
     Serial.println("[BOOT] Inicializacion terminada");
