@@ -2,9 +2,7 @@
 #define API_SERVICE_H
 
 #include <Arduino.h>
-#include "../models/stock_model.h"
 
-void api_init_wifi(const char* ssid, const char* password);
-bool api_fetch_stock_data(const String& symbol, StockData& outStock);
+bool api_fetch_stock_data(const char* symbol, float *out_price, float *out_change);
 
 #endif
