@@ -104,13 +104,61 @@ static bool pca_write(uint8_t reg, uint8_t value) {
 static uint8_t gt_addr = 0x5D;
 static bool    gt_ok   = false;
 
+
 static bool gt_read(uint16_t reg, uint8_t *buf, size_t len) {
+    if (buf == nullptr || len == 0) {
+        return false;
+    }
+
+    // Seleccionar el registro del GT911 y finalizar la transmisión.
     Wire.beginTransmission(gt_addr);
-    Wire.write(reg >> 8);
-    Wire.write(reg & 0xFF);
-    if (Wire.endTransmission(true) != 0) return false;
-    if (Wire.requestFrom((int)gt_addr, (int)len) != (int)len) return false;
-    for (size_t i = 0; i < len; i++) buf[i] = Wire.read();
+    Wire.write((uint8_t)(reg >> 8));
+    Wire.write((uint8_t)(reg & 0xFF));
+
+    uint8_t err = Wire.endTransmission(true);
+
+    if (err != 0) {
+        Serial.printf(
+            "[I2C] Error seleccionando registro 0x%04X: %u\n",
+            reg, err
+        );
+        return false;
+    }
+
+    // Leer los datos en una transacción independiente.
+    size_t received = Wire.requestFrom(
+        (uint8_t)gt_addr,
+        len,
+        (uint8_t)true
+    );
+
+    if (received != len) {
+        while (Wire.available()) {
+            Wire.read();
+        }
+
+        Serial.printf(
+            "[I2C] Lectura incompleta reg=0x%04X "
+            "recibidos=%u esperados=%u\n",
+            reg,
+            (unsigned int)received,
+            (unsigned int)len
+        );
+        return false;
+    }
+
+    for (size_t i = 0; i < len; i++) {
+        if (!Wire.available()) {
+            Serial.printf(
+                "[I2C] Datos insuficientes en registro 0x%04X\n",
+                reg
+            );
+            return false;
+        }
+
+        buf[i] = (uint8_t)Wire.read();
+    }
+
     return true;
 }
 
@@ -276,7 +324,7 @@ void display_init() {
     Serial.println("[TOUCH] Inicializando GT911...");
     gt_ok = gt_init();
     if (gt_ok) {
-        Wire.setClock(400000);
+        Wire.setClock(100000);
     } else {
         i2c_scan();              // para ver que hay en el bus tras los resets
     }
