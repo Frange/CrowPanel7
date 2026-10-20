@@ -19,5 +19,7 @@ bool storage_add_ticker(const String &ticker);
 void storage_save_wifi_credentials(const String &ssid, const String &password);
 bool storage_get_wifi_credentials(String &ssid, String &password);
 int storage_wifi_status();
+bool storage_remove_ticker(size_t index);
+
 
 #endif

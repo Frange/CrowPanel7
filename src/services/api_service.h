@@ -3,6 +3,16 @@
 
 #include <Arduino.h>
 
-bool api_fetch_stock_data(const char* symbol, float *out_price, float *out_change);
+struct StockData {
+    String symbol;
+    String market;
+    String currency;
+    float open;
+    float high;
+    float price;
+    bool valid;
+};
+
+bool api_fetch_stock_data(const char* symbol, StockData* out);
 
 #endif

@@ -1,6 +1,7 @@
 #include "screen_list.h"
 #include "../ui_manager.h"
 #include "../../services/storage_service.h"
+#include <WiFi.h>
 
 static lv_obj_t *wifi_indicator = nullptr;
 
@@ -187,7 +188,6 @@ lv_obj_t *screen_list_create()
         }
     }
 
-    // Prueba de conectividad al entrar en la pantalla y al pulsar Actualizar.
     update_wifi_indicator();
 
     return scr;

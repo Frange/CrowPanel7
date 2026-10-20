@@ -1,24 +1,30 @@
 #include <Arduino.h>
 #include "display_config.h"
 #include "ui/ui_manager.h"
+#include "services/storage_service.h"
 
-void setup() {
-    // ESTO ES OBLIGATORIO PARA VER LOS LOGS
+void setup()
+{
     Serial.begin(115200);
-    delay(500); // Pequeña pausa para estabilizar el puerto serie
+    delay(500);
 
     Serial.println("\n[BOOT] Inicio");
 
-    // Inicializar pantalla y táctil
+    // 1. Inicializar pantalla, bus I2C y táctil.
     display_init();
 
-    // Inicializar interfaz gráfica (LVGL)
+    // 2. Abrir Preferences antes de utilizar cualquier función
+    //    del servicio de almacenamiento.
+    storage_init();
+
+    // 3. Crear las pantallas de LVGL.
     ui_init();
-    
+
     Serial.println("[BOOT] Inicializacion terminada");
 }
 
-void loop() {
+void loop()
+{
     lv_tick_inc(5);
     lv_timer_handler();
     delay(5);

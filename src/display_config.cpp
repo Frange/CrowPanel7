@@ -276,13 +276,24 @@ static void touchpad_read(
 
     display_get_touch(&x, &y, &touched);
 
-    if (touched) {
-        data->state = LV_INDEV_STATE_PR;
-        data->point.x = x;
-        data->point.y = y;
-    } else {
-        data->state = LV_INDEV_STATE_REL;
+    static bool last_touched = false;
+
+    if (touched != last_touched) {
+        Serial.printf(
+            "[TOUCHPAD] %s x=%d y=%d\n",
+            touched ? "PULSADO" : "LIBERADO",
+            x,
+            y
+        );
+        last_touched = touched;
     }
+
+    data->state = touched
+        ? LV_INDEV_STATE_PR
+        : LV_INDEV_STATE_REL;
+
+    data->point.x = x;
+    data->point.y = y;
 }
 
 // ---------------------------------------------------------------------------
@@ -306,11 +317,16 @@ void display_init() {
 
     Serial.println("[TOUCH] Inicializando GT911...");
     gt_ok = gt_init();
+
     if (gt_ok) {
-        Wire.setClock(100000);
+        // Aumentar la velocidad tras detectar correctamente el GT911.
+        Wire.setClock(200000);
+        Serial.println("[TOUCH] GT911 listo a 100 kHz");
     } else {
-        i2c_scan();              // para ver que hay en el bus tras los resets
+        Serial.println("[TOUCH] No se pudo inicializar el GT911");
+        i2c_scan();
     }
+
     Serial.println("[TOUCH] Inicializacion terminada");
 
     lv_init();
@@ -341,8 +357,10 @@ void display_init() {
 
     static lv_indev_drv_t indev_drv;
     lv_indev_drv_init(&indev_drv);
-    indev_drv.type    = LV_INDEV_TYPE_POINTER;
+
+    indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = touchpad_read;
+
     lv_indev_drv_register(&indev_drv);
 
     Serial.println("[LCD] Display y Tactil LVGL registrados");
@@ -426,16 +444,15 @@ void display_get_touch(
                     pressed = false;
                 }
 
+                Serial.printf(
+                    "[TOUCH] status=0x%02X puntos=%u x=%d y=%d\n",
+                    st, st & 0x0F, lx, ly
+                );
+
                 gt_write8(0x814E, 0);
             }
         } else {
             read_fail++;
-        }
-
-        // Diagnostico cada 2 s
-        if (millis() - last_diag > 2000) {
-            last_diag = millis();
-            gt_diag();
         }
     }
 

@@ -1,13 +1,18 @@
+
 #include "ui_keyboard.h"
 
-static void keyboard_textarea_event_cb(lv_event_t *e)
+static void textarea_event_cb(lv_event_t *e)
 {
-    lv_obj_t *keyboard = (lv_obj_t *)lv_event_get_user_data(e);
+    lv_obj_t *keyboard =
+        static_cast<lv_obj_t *>(lv_event_get_user_data(e));
 
-    if (keyboard == nullptr) return;
+    if (keyboard == nullptr) {
+        return;
+    }
 
-    if (lv_event_get_code(e) == LV_EVENT_CLICKED ||
-        lv_event_get_code(e) == LV_EVENT_FOCUSED) {
+    lv_event_code_t code = lv_event_get_code(e);
+
+    if (code == LV_EVENT_CLICKED || code == LV_EVENT_FOCUSED) {
         lv_obj_clear_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(keyboard);
     }
@@ -17,9 +22,12 @@ static void keyboard_event_cb(lv_event_t *e)
 {
     lv_event_code_t code = lv_event_get_code(e);
 
-    if (code != LV_EVENT_READY && code != LV_EVENT_CANCEL) return;
+    if (code != LV_EVENT_READY && code != LV_EVENT_CANCEL) {
+        return;
+    }
 
     lv_obj_t *keyboard = lv_event_get_target(e);
+
     if (keyboard != nullptr) {
         lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
     }
@@ -31,24 +39,47 @@ lv_obj_t *ui_keyboard_attach(
     lv_keyboard_mode_t mode
 )
 {
-    if (screen == nullptr || textarea == nullptr) return nullptr;
+    if (screen == nullptr || textarea == nullptr) {
+        return nullptr;
+    }
 
     lv_obj_t *keyboard = lv_keyboard_create(screen);
 
-    // En 800x480 deja una zona libre por encima para el campo activo.
     lv_obj_set_size(keyboard, 800, 200);
     lv_obj_align(keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+
     lv_keyboard_set_mode(keyboard, mode);
     lv_keyboard_set_textarea(keyboard, textarea);
 
-    lv_obj_add_event_cb(keyboard, keyboard_event_cb, LV_EVENT_ALL, nullptr);
+    // Ocultar inicialmente y mostrarlo al seleccionar el campo.
     lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_add_event_cb(
-        textarea, keyboard_textarea_event_cb, LV_EVENT_CLICKED, keyboard
+        keyboard,
+        keyboard_event_cb,
+        LV_EVENT_READY,
+        nullptr
     );
+
     lv_obj_add_event_cb(
-        textarea, keyboard_textarea_event_cb, LV_EVENT_FOCUSED, keyboard
+        keyboard,
+        keyboard_event_cb,
+        LV_EVENT_CANCEL,
+        nullptr
+    );
+
+    lv_obj_add_event_cb(
+        textarea,
+        textarea_event_cb,
+        LV_EVENT_CLICKED,
+        keyboard
+    );
+
+    lv_obj_add_event_cb(
+        textarea,
+        textarea_event_cb,
+        LV_EVENT_FOCUSED,
+        keyboard
     );
 
     return keyboard;
