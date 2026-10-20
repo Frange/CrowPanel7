@@ -48,7 +48,7 @@ public:
             cfg.pin_hsync   = GPIO_NUM_39;
             cfg.pin_pclk    = GPIO_NUM_0;
 
-            cfg.freq_write = 15000000;   // si baila, prueba 12000000
+            cfg.freq_write = 15000000;
 
             cfg.hsync_polarity    = 0;
             cfg.hsync_front_porch = 40;
@@ -86,6 +86,19 @@ public:
 static LGFX lcd;
 
 // ---------------------------------------------------------------------------
+// PCA9557 (expansor de la CrowPanel V3.0)
+// Registros: 0=entrada, 1=salida, 2=polaridad, 3=configuracion (1=entrada)
+// ---------------------------------------------------------------------------
+static constexpr uint8_t PCA9557_ADDR = 0x18;
+
+static bool pca_write(uint8_t reg, uint8_t value) {
+    Wire.beginTransmission(PCA9557_ADDR);
+    Wire.write(reg);
+    Wire.write(value);
+    return Wire.endTransmission() == 0;
+}
+
+// ---------------------------------------------------------------------------
 // GT911 (lectura directa por I2C)
 // ---------------------------------------------------------------------------
 static uint8_t gt_addr = 0x5D;
@@ -109,20 +122,88 @@ static void gt_write8(uint16_t reg, uint8_t v) {
     Wire.endTransmission(true);
 }
 
-static bool gt_init() {
+static void i2c_scan() {
+    Serial.println("[I2C] Escaneando bus...");
+    int found = 0;
+    for (uint8_t a = 1; a < 127; a++) {
+        Wire.beginTransmission(a);
+        if (Wire.endTransmission() == 0) {
+            Serial.printf("[I2C]  dispositivo en 0x%02X\n", a);
+            found++;
+        }
+    }
+    Serial.printf("[I2C] %d dispositivo(s)\n", found);
+}
+
+// Reset del GT911 usando el PCA9557.
+// rst_mask: bit del PCA conectado al RST del GT911 (0x01 o 0x02)
+// int_mask: el otro bit (INT). INT bajo durante reset -> 0x5D, alto -> 0x14
+static void touch_reset(uint8_t rst_mask, bool int_high) {
+    const uint8_t int_mask = (rst_mask == 0x01) ? 0x02 : 0x01;
+
+    pca_write(0x03, 0x00);                                  // todos salida
+    pca_write(0x01, int_high ? int_mask : 0x00);            // RST bajo, INT segun direccion
+    delay(20);
+    pca_write(0x01, (int_high ? int_mask : 0x00) | rst_mask); // liberar RST
+    delay(10);
+    pca_write(0x03, int_mask);                              // INT pasa a entrada
+    delay(150);                                             // GT911 necesita tiempo
+}
+
+static bool gt_probe() {
     for (uint8_t a : {(uint8_t)0x5D, (uint8_t)0x14}) {
         Wire.beginTransmission(a);
         if (Wire.endTransmission() == 0) {
             gt_addr = a;
-            uint8_t id[4] = {0};
-            gt_read(0x8140, id, 4);
-            Serial.printf("[TOUCH] GT911 en 0x%02X, ID=%c%c%c%c\n",
-                          a, id[0], id[1], id[2], id[3]);
-            gt_write8(0x814E, 0);   // limpiar flag inicial
             return true;
         }
     }
-    Serial.println("[TOUCH] GT911 NO responde en 0x5D ni 0x14");
+    return false;
+}
+
+static bool gt_init() {
+    const uint8_t rst_opts[] = {0x01, 0x02};
+
+    for (uint8_t rst : rst_opts) {
+        for (int int_high = 0; int_high <= 1; int_high++) {
+            Serial.printf("[TOUCH] Intento: RST=IO%d, INT %s\n",
+                          (rst == 0x01) ? 0 : 1, int_high ? "alto" : "bajo");
+            touch_reset(rst, int_high);
+
+            if (gt_probe()) {
+                uint8_t id[4] = {0};
+                gt_read(0x8140, id, 4);
+                Serial.printf("[TOUCH] GT911 en 0x%02X, ID=%c%c%c%c\n",
+                              gt_addr,
+                              id[0] ? id[0] : '?',
+                              id[1] ? id[1] : '?',
+                              id[2] ? id[2] : '?',
+                              id[3] ? id[3] : '?');
+
+                // Volcado de la configuracion del chip
+                uint8_t c[6] = {0};
+                if (gt_read(0x8047, c, 6)) {
+                    Serial.printf("[TOUCH] cfg ver=0x%02X  Xmax=%d  Ymax=%d  maxToques=%d\n",
+                                  c[0],
+                                  c[1] | (c[2] << 8),
+                                  c[3] | (c[4] << 8),
+                                  c[5] & 0x0F);
+                                  uint8_t m[1];
+                    if (gt_read(0x804D, m, 1)) Serial.printf("[TOUCH] ModuleSwitch1=0x%02X\n", m[0]);
+                    if (gt_read(0x804E, m, 1)) Serial.printf("[TOUCH] ModuleSwitch2=0x%02X\n", m[0]);
+                    if (gt_read(0x8056, m, 1)) Serial.printf("[TOUCH] RefreshRate=%d\n", m[0]);
+
+                } else {
+                    Serial.println("[TOUCH] No pude leer la configuracion");
+                }
+
+                gt_write8(0x814E, 0);   // limpiar flag inicial
+                return true;
+            }
+        }
+    }
+
+    Serial.println("[TOUCH] GT911 NO responde con ninguna combinacion");
     return false;
 }
 
@@ -180,38 +261,13 @@ void display_init() {
     Serial.println("[LCD] Iniciando I2C y Pantalla...");
 
     Wire.begin(19, 20);
-    Wire.setClock(400000);
+    Wire.setClock(100000);       // 100 kHz durante la deteccion
     Wire.setTimeOut(50);
 
-    // PCA9557 de la CrowPanel V3.0 (controla el reset del GT911)
-    constexpr uint8_t PCA9557_ADDR = 0x18;
-
-    auto pca_write = [](uint8_t reg, uint8_t value) -> bool {
-        Wire.beginTransmission(PCA9557_ADDR);
-        Wire.write(reg);
-        Wire.write(value);
-        return Wire.endTransmission() == 0;
-    };
-
-    Serial.println("[TOUCH] Inicializando PCA9557...");
-
-    if (!pca_write(0x03, 0x00)) {            // todos como salida
-        Serial.println("[TOUCH] ERROR configurando PCA9557");
-    } else {
-        pca_write(0x01, 0x00);               // reset GT911 activo
-        delay(20);
-        pca_write(0x01, 0x01);               // liberar reset
-        delay(100);
-
-        if (!pca_write(0x03, 0x02)) {        // IO0 salida, IO1 entrada (INT)
-            Serial.println("[TOUCH] ERROR configurando INT");
-        } else {
-            Serial.println("[TOUCH] PCA9557 inicializado");
-        }
-    }
+    i2c_scan();
 
     pinMode(2, OUTPUT);
-    digitalWrite(2, HIGH);                   // backlight
+    digitalWrite(2, HIGH);       // backlight
 
     lcd.init();
     lcd.setBrightness(255);
@@ -219,11 +275,16 @@ void display_init() {
 
     Serial.println("[TOUCH] Inicializando GT911...");
     gt_ok = gt_init();
+    if (gt_ok) {
+        Wire.setClock(400000);
+    } else {
+        i2c_scan();              // para ver que hay en el bus tras los resets
+    }
     Serial.println("[TOUCH] Inicializacion terminada");
 
     lv_init();
 
-    // Buffers LVGL en RAM interna (evita competir con el framebuffer en PSRAM)
+    // Buffers LVGL en RAM interna
     constexpr size_t buffer_pixels = static_cast<size_t>(SCREEN_WIDTH) * 20;
     constexpr size_t buffer_bytes  = buffer_pixels * sizeof(lv_color_t);
 
@@ -268,32 +329,62 @@ void display_get_touch(
         return;
     }
 
-    static int16_t lx = 0, ly = 0;
-    static bool pressed = false;
+    static int16_t  lx = 0, ly = 0;
+    static bool     pressed = false;
+    static uint8_t  last_st = 0xFF;
+    static uint32_t last_hb = 0;
+    static uint32_t read_fail = 0, read_ok = 0;
 
     if (gt_ok) {
-        uint8_t st;
-        if (gt_read(0x814E, &st, 1) && (st & 0x80)) {      // dato nuevo
-            const uint8_t n = st & 0x0F;
+        // Estado + primer punto en una sola lectura: 0x814E..0x8155
+        uint8_t b[8] = {0};
 
-            if (n >= 1 && n <= 5) {
-                uint8_t p[4];
-                if (gt_read(0x8150, p, 4)) {
-                    const int px = p[0] | (p[1] << 8);
-                    const int py = p[2] | (p[3] << 8);
+        if (gt_read(0x814E, b, 8)) {
+            read_ok++;
+            const uint8_t st = b[0];
+
+            // Log SIEMPRE que cambie el registro de estado
+            if (st != last_st) {
+                last_st = st;
+                Serial.printf("[TOUCH] st=0x%02X  datos: %02X %02X %02X %02X %02X %02X %02X\n",
+                              st, b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
+            }
+
+            if (st & 0x80) {                               // dato nuevo
+                const uint8_t n = st & 0x0F;
+
+                if (n >= 1 && n <= 5) {
+                    // b[1]=id, b[2..3]=X, b[4..5]=Y
+                    const int px = b[2] | (b[3] << 8);
+                    const int py = b[4] | (b[5] << 8);
+
+                    Serial.printf("[TOUCH] n=%d X=%d Y=%d %s\n",
+                                  n, px, py,
+                                  (px < SCREEN_WIDTH && py < SCREEN_HEIGHT) ? "" : "(FUERA DE RANGO)");
+
                     if (px < SCREEN_WIDTH && py < SCREEN_HEIGHT) {
                         lx = px;
                         ly = py;
                         pressed = true;
                     }
+                } else {
+                    pressed = false;                       // 0 toques = soltado
                 }
-            } else {
-                pressed = false;                           // 0 toques = soltado
-            }
 
-            gt_write8(0x814E, 0);                          // limpiar flag
+                gt_write8(0x814E, 0);                      // limpiar flag
+            }
+        } else {
+            read_fail++;
         }
-        // sin dato nuevo: se mantiene el estado anterior
+    }
+
+    if (millis() - last_hb > 3000) {
+        last_hb = millis();
+        Serial.printf("[TOUCH] hb ok=%lu fail=%lu pressed=%d last_st=0x%02X\n",
+                      (unsigned long)read_ok,
+                      (unsigned long)read_fail,
+                      pressed ? 1 : 0,
+                      last_st);
     }
 
     *x = lx;
