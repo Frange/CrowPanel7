@@ -1,4 +1,3 @@
-
 #define LGFX_USE_V1
 
 #include <Arduino.h>
@@ -10,10 +9,6 @@
 
 #include "display_config.h"
 
-// ============================================================
-// CROWPANEL V3 - RGB 800x480
-// ============================================================
-
 class LGFX : public lgfx::LGFX_Device {
 public:
     lgfx::Panel_RGB _panel_instance;
@@ -21,12 +16,8 @@ public:
     lgfx::Touch_GT911 _touch_instance;
 
     LGFX() {
-        // ----------------------------------------------------
-        // BUS RGB DE 16 BITS
-        // ----------------------------------------------------
         {
             auto cfg = _bus_instance.config();
-
             cfg.panel = &_panel_instance;
 
             // Azul
@@ -51,7 +42,7 @@ public:
             cfg.pin_d14 = GPIO_NUM_48;
             cfg.pin_d15 = GPIO_NUM_45;
 
-            // Señales RGB
+            // Señales RGB (Pines originales estables)
             cfg.pin_henable = GPIO_NUM_41;
             cfg.pin_vsync   = GPIO_NUM_40;
             cfg.pin_hsync   = GPIO_NUM_39;
@@ -76,42 +67,29 @@ public:
             _bus_instance.config(cfg);
         }
 
-        // ----------------------------------------------------
-        // PANEL RGB
-        // ----------------------------------------------------
         {
             auto cfg = _panel_instance.config();
-
             cfg.memory_width  = SCREEN_WIDTH;
             cfg.memory_height = SCREEN_HEIGHT;
             cfg.panel_width   = SCREEN_WIDTH;
             cfg.panel_height  = SCREEN_HEIGHT;
-
             cfg.offset_x = 0;
             cfg.offset_y = 0;
-
             _panel_instance.config(cfg);
         }
 
         _panel_instance.setBus(&_bus_instance);
 
-        // ----------------------------------------------------
-        // TÁCTIL GT911
-        // ----------------------------------------------------
         {
             auto cfg = _touch_instance.config();
-
             cfg.x_min = 0;
             cfg.x_max = SCREEN_WIDTH - 1;
             cfg.y_min = 0;
             cfg.y_max = SCREEN_HEIGHT - 1;
-
             cfg.pin_int = GPIO_NUM_NC;
             cfg.pin_rst = GPIO_NUM_NC;
-
             cfg.bus_shared = false;
             cfg.offset_rotation = 0;
-
             cfg.i2c_port = I2C_NUM_1;
             cfg.pin_sda = GPIO_NUM_19;
             cfg.pin_scl = GPIO_NUM_20;
@@ -127,20 +105,9 @@ public:
 
 static LGFX lcd;
 
-// ============================================================
-// BUFFERS PARCIALES DE LVGL
-// ============================================================
-
 static lv_disp_draw_buf_t draw_buf;
-
 static lv_color_t *buf1 = nullptr;
 static lv_color_t *buf2 = nullptr;
-
-static bool display_ready = false;
-
-// ============================================================
-// TRANSFERENCIA LVGL -> PANEL RGB
-// ============================================================
 
 static void disp_flush(
     lv_disp_drv_t *disp,
@@ -150,8 +117,6 @@ static void disp_flush(
     const int32_t w = area->x2 - area->x1 + 1;
     const int32_t h = area->y2 - area->y1 + 1;
 
-    // pushImage escribe en el panel usando la API de LovyanGFX.
-    // El tipo rgb565_t mantiene el formato de píxel de LVGL.
     lcd.pushImage(
         area->x1,
         area->y1,
@@ -160,13 +125,8 @@ static void disp_flush(
         reinterpret_cast<const lgfx::rgb565_t *>(color_p)
     );
 
-    // La copia es síncrona: LVGL puede reutilizar el buffer.
     lv_disp_flush_ready(disp);
 }
-
-// ============================================================
-// LECTURA DEL TÁCTIL
-// ============================================================
 
 static void touchpad_read(
     lv_indev_drv_t *indev_driver,
@@ -189,129 +149,48 @@ static void touchpad_read(
     }
 }
 
-// ============================================================
-// INICIALIZACIÓN DE PANTALLA Y LVGL 8
-// ============================================================
-
 void display_init() {
     Serial.println("[LCD] Iniciando LovyanGFX...");
 
-    lcd.init();
-
-    // Retroiluminación
     pinMode(2, OUTPUT);
     digitalWrite(2, HIGH);
+
+    lcd.init();
     lcd.setBrightness(255);
 
     Serial.println("[LCD] LovyanGFX inicializado");
 
-    // Prueba inicial de colores
-    lcd.fillScreen(TFT_RED);
-    delay(300);
-
-    lcd.fillScreen(TFT_GREEN);
-    delay(300);
-
-    lcd.fillScreen(TFT_BLUE);
-    delay(300);
-
-    lcd.fillScreen(TFT_BLACK);
-
-    // --------------------------------------------------------
-    // INICIALIZAR LVGL
-    // --------------------------------------------------------
     lv_init();
 
-    // Dos buffers de 40 líneas, ubicados en PSRAM.
-    constexpr size_t buffer_pixels =
-        static_cast<size_t>(SCREEN_WIDTH) * 40;
+    constexpr size_t buffer_pixels = static_cast<size_t>(SCREEN_WIDTH) * 40;
+    constexpr size_t buffer_bytes = buffer_pixels * sizeof(lv_color_t);
 
-    constexpr size_t buffer_bytes =
-        buffer_pixels * sizeof(lv_color_t);
-
-    buf1 = static_cast<lv_color_t *>(
-        heap_caps_malloc(
-            buffer_bytes,
-            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
-        )
-    );
-
-    buf2 = static_cast<lv_color_t *>(
-        heap_caps_malloc(
-            buffer_bytes,
-            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
-        )
-    );
-
-    Serial.printf(
-        "[LCD] Buffer 1: %s\n",
-        buf1 ? "OK" : "ERROR"
-    );
-
-    Serial.printf(
-        "[LCD] Buffer 2: %s\n",
-        buf2 ? "OK" : "ERROR"
-    );
+    buf1 = static_cast<lv_color_t *>(heap_caps_malloc(buffer_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    buf2 = static_cast<lv_color_t *>(heap_caps_malloc(buffer_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 
     if (buf1 == nullptr || buf2 == nullptr) {
-        Serial.println(
-            "[LCD] ERROR: memoria insuficiente para LVGL"
-        );
-
-        if (buf1 != nullptr) {
-            heap_caps_free(buf1);
-            buf1 = nullptr;
-        }
-
-        if (buf2 != nullptr) {
-            heap_caps_free(buf2);
-            buf2 = nullptr;
-        }
-
+        Serial.println("[LCD] ERROR: memoria insuficiente para LVGL");
         return;
     }
 
-    lv_disp_draw_buf_init(
-        &draw_buf,
-        buf1,
-        buf2,
-        buffer_pixels
-    );
+    lv_disp_draw_buf_init(&draw_buf, buf1, buf2, buffer_pixels);
 
-    // --------------------------------------------------------
-    // REGISTRAR DISPLAY LVGL 8
-    // --------------------------------------------------------
     static lv_disp_drv_t disp_drv;
-
     lv_disp_drv_init(&disp_drv);
-
     disp_drv.hor_res = SCREEN_WIDTH;
     disp_drv.ver_res = SCREEN_HEIGHT;
     disp_drv.flush_cb = disp_flush;
     disp_drv.draw_buf = &draw_buf;
-
     lv_disp_drv_register(&disp_drv);
 
-    // --------------------------------------------------------
-    // REGISTRAR TÁCTIL
-    // --------------------------------------------------------
     static lv_indev_drv_t indev_drv;
-
     lv_indev_drv_init(&indev_drv);
-
     indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = touchpad_read;
-
     lv_indev_drv_register(&indev_drv);
 
-    display_ready = true;
-
-    Serial.println("[LCD] Display LVGL registrado");
+    Serial.println("[LCD] Display y Tactil LVGL registrados");
 }
-
-// ============================================================
-// LECTURA PÚBLICA DEL TÁCTIL
-// ============================================================
 
 void display_get_touch(
     int16_t *x,
@@ -323,7 +202,6 @@ void display_get_touch(
     }
 
     lgfx::touch_point_t tp;
-
     const int count = lcd.getTouch(&tp, 1);
 
     if (count > 0) {

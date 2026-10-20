@@ -6,11 +6,12 @@
 enum ScreenState {
     SCREEN_LIST,
     SCREEN_DETAIL,
-    SCREEN_ADD
+    SCREEN_ADD,
+    SCREEN_SETTINGS
 };
 
 void ui_init();
 void ui_change_screen(ScreenState state);
-void ui_update(); // Se llama en el loop principal
+void ui_update();
 
 #endif
