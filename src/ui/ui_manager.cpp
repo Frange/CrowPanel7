@@ -1,3 +1,4 @@
+
 #include "ui_manager.h"
 #include "screens/screen_list.h"
 #include "screens/screen_detail.h"
@@ -23,22 +24,36 @@ void ui_change_screen(ScreenState state)
         case SCREEN_LIST:
             new_screen = screen_list_create();
             break;
+
         case SCREEN_DETAIL:
             new_screen = screen_detail_create();
             break;
+
         case SCREEN_ADD:
             new_screen = screen_add_create();
             break;
+
         case SCREEN_SETTINGS:
             new_screen = screen_settings_create();
             break;
+
         default:
             return;
     }
 
-    if (new_screen != nullptr) {
-        lv_scr_load_anim(new_screen, LV_SCR_LOAD_ANIM_FADE_ON, 200, 0, true);
-        current_screen = new_screen;
+    if (new_screen == nullptr) {
+        return;
+    }
+
+    lv_obj_t *old_screen = current_screen;
+
+    // Cambiar inmediatamente, sin fundido.
+    lv_scr_load(new_screen);
+    current_screen = new_screen;
+
+    // Eliminar la pantalla anterior de forma segura.
+    if (old_screen != nullptr && old_screen != new_screen) {
+        lv_obj_del_async(old_screen);
     }
 }
 

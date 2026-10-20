@@ -214,32 +214,15 @@ static bool gt_init() {
 
     for (uint8_t rst : rst_opts) {
         for (int int_high = 0; int_high <= 1; int_high++) {
-            Serial.printf("[TOUCH] Intento: RST=IO%d, INT %s\n",
-                          (rst == 0x01) ? 0 : 1, int_high ? "alto" : "bajo");
             touch_reset(rst, int_high);
 
             if (gt_probe()) {
                 uint8_t id[4] = {0};
                 gt_read(0x8140, id, 4);
-                Serial.printf("[TOUCH] GT911 en 0x%02X, ID=%c%c%c%c\n",
-                              gt_addr,
-                              id[0] ? id[0] : '?',
-                              id[1] ? id[1] : '?',
-                              id[2] ? id[2] : '?',
-                              id[3] ? id[3] : '?');
 
                 // Volcado de la configuracion del chip
                 uint8_t c[6] = {0};
                 if (gt_read(0x8047, c, 6)) {
-                    Serial.printf("[TOUCH] cfg ver=0x%02X  Xmax=%d  Ymax=%d  maxToques=%d\n",
-                                  c[0],
-                                  c[1] | (c[2] << 8),
-                                  c[3] | (c[4] << 8),
-                                  c[5] & 0x0F);
-                                  uint8_t m[1];
-                    if (gt_read(0x804D, m, 1)) Serial.printf("[TOUCH] ModuleSwitch1=0x%02X\n", m[0]);
-                    if (gt_read(0x804E, m, 1)) Serial.printf("[TOUCH] ModuleSwitch2=0x%02X\n", m[0]);
-                    if (gt_read(0x8056, m, 1)) Serial.printf("[TOUCH] RefreshRate=%d\n", m[0]);
 
                 } else {
                     Serial.println("[TOUCH] No pude leer la configuracion");
@@ -425,8 +408,6 @@ void display_get_touch(
 
             if (st != last_st) {
                 last_st = st;
-                Serial.printf("[TOUCH] st=0x%02X  datos: %02X %02X %02X %02X %02X %02X %02X\n",
-                              st, b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
             }
 
             if (st & 0x80) {
@@ -435,10 +416,6 @@ void display_get_touch(
                 if (n >= 1 && n <= 5) {
                     const int px = b[2] | (b[3] << 8);
                     const int py = b[4] | (b[5] << 8);
-
-                    Serial.printf("[TOUCH] n=%d X=%d Y=%d %s\n",
-                                  n, px, py,
-                                  (px < SCREEN_WIDTH && py < SCREEN_HEIGHT) ? "" : "(FUERA DE RANGO)");
 
                     if (px < SCREEN_WIDTH && py < SCREEN_HEIGHT) {
                         lx = px;
@@ -464,11 +441,6 @@ void display_get_touch(
 
     if (millis() - last_hb > 3000) {
         last_hb = millis();
-        Serial.printf("[TOUCH] hb ok=%lu fail=%lu pressed=%d last_st=0x%02X\n",
-                      (unsigned long)read_ok,
-                      (unsigned long)read_fail,
-                      pressed ? 1 : 0,
-                      last_st);
     }
 
     *x = lx;
