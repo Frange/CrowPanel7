@@ -1,9 +1,9 @@
 
-#include "screen_list.h"
 
 #include <Arduino.h>
 #include <WiFi.h>
-
+#include "screen_detail.h"
+#include "screen_list.h"
 #include "../ui_manager.h"
 
 #include "../../services/storage_service.h"
@@ -32,8 +32,31 @@ lv_timer_t *list_timer = nullptr;
 
 uint32_t last_refresh_request = 0;
 bool first_refresh_requested = false;
+void ticker_row_event_cb(lv_event_t *e);
 
 void update_rows();
+
+void ticker_row_event_cb(lv_event_t *e)
+{
+    size_t index = static_cast<size_t>(
+        reinterpret_cast<uintptr_t>(
+            lv_event_get_user_data(e)
+        )
+    );
+
+    if (index >= MAX_ROWS) {
+        return;
+    }
+
+    String symbol = storage_get_ticker(index);
+
+    if (symbol.isEmpty()) {
+        return;
+    }
+
+    screen_detail_set_symbol(symbol);
+    ui_change_screen(SCREEN_DETAIL);
+}
 
 void refresh_btn_event_cb(lv_event_t *e)
 {
@@ -649,6 +672,15 @@ lv_obj_t *screen_list_create()
         lv_obj_t *row = lv_obj_create(list_content);
 
         lv_obj_set_size(row, 780, 48);
+
+        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_add_event_cb(
+            row,
+            ticker_row_event_cb,
+            LV_EVENT_CLICKED,
+            reinterpret_cast<void *>(static_cast<uintptr_t>(i))
+        );
 
         lv_obj_align(
             row,

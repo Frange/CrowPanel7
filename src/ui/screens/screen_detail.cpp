@@ -1,8 +1,20 @@
 #include "screen_detail.h"
 #include "../ui_manager.h"
 
+#include <Arduino.h>
+#include "../ui_manager.h"
+
 static void back_btn_event_cb(lv_event_t * e) {
     ui_change_screen(SCREEN_LIST);
+}
+
+namespace {
+    String selected_symbol = "";
+}
+
+void screen_detail_set_symbol(const String &symbol)
+{
+    selected_symbol = symbol;
 }
 
 lv_obj_t* screen_detail_create() {
