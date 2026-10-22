@@ -1,9 +1,9 @@
 
 #include "ui_manager.h"
-#include "screens/screen_list.h"
-#include "screens/screen_detail.h"
-#include "screens/screen_add.h"
-#include "screens/screen_settings.h"
+#include "screens/list/screen_list.h"
+#include "screens/detail/screen_detail.h"
+#include "screens/add/screen_add.h"
+#include "screens/settings/screen_settings.h"
 
 static lv_obj_t *current_screen = nullptr;
 

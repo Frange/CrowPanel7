@@ -366,39 +366,6 @@ void display_init() {
     Serial.println("[LCD] Display y Tactil LVGL registrados");
 }
 
-static void gt_diag() {
-    uint8_t blk[8];
-
-    auto dump_blk = [&](const char *name, uint16_t reg) {
-        memset(blk, 0xEE, sizeof(blk));
-        //Serial.printf("[DIAG] %-14s bloque: ", name);
-        //if (gt_read(reg, blk, 8)) {
-        //    for (int i = 0; i < 8; i++) Serial.printf("%02X ", blk[i]);
-        //} else {
-        //    Serial.print("FALLO");
-        //}
-        //Serial.println();
-    };
-
-    // Zona de ID de producto: debe verse 39 31 31 00 ("911")
-    dump_blk("ID  0x8140", 0x8140);
-
-    // Zona de configuracion: version, Xmax, Ymax, maxToques
-    dump_blk("CFG 0x8047", 0x8047);
-
-    // Zona de estado/puntos, en bloque
-    dump_blk("ST  0x814E", 0x814E);
-
-    // La misma zona leida byte a byte (una transaccion por registro)
-    //Serial.print("[DIAG] ST  0x814E  uno a uno: ");
-    //for (uint16_t i = 0; i < 8; i++) {
-        //uint8_t v = 0xEE;
-        //if (gt_read(0x814E + i, &v, 1)) Serial.printf("%02X ", v);
-        //else Serial.print("FF? ");
-    //}
-    //Serial.println();
-}
-
 // ---------------------------------------------------------------------------
 // Touch
 // ---------------------------------------------------------------------------
@@ -414,7 +381,7 @@ void display_get_touch(
     static int16_t  lx = 0, ly = 0;
     static bool     pressed = false;
     static uint8_t  last_st = 0xFF;
-    static uint32_t last_hb = 0, last_diag = 0;
+    static uint32_t last_hb = 0;
     static uint32_t read_fail = 0, read_ok = 0;
 
     if (gt_ok) {

@@ -13,12 +13,17 @@ namespace {
 
 constexpr size_t MAX_TICKERS = 40;
 constexpr size_t SYMBOL_SIZE = 17;
-constexpr uint8_t JOB_REFRESH = 1;
-constexpr uint8_t JOB_VALIDATE = 2;
+
+enum JobType : uint8_t {
+    JOB_REFRESH = 1,
+    JOB_VALIDATE,
+    JOB_HISTORY
+};
 
 struct MarketJob {
     uint8_t type;
     char symbol[SYMBOL_SIZE];
+    uint8_t period;
 };
 
 struct CachedStock {
@@ -36,11 +41,15 @@ bool initialized = false;
 bool refresh_pending = false;
 bool validation_pending = false;
 bool validation_done = false;
+bool history_pending = false;
+bool history_done = false;
 bool worker_busy = false;
 
 String validation_symbol;
-StockData validation_data;
+StockData validation_data = {};
 bool validation_success = false;
+
+HistoryData history_result = {};
 
 void lock_market()
 {
@@ -89,7 +98,7 @@ void cache_store(const StockData &data)
 
 bool fetch_one(const String &symbol)
 {
-    StockData data;
+    StockData data = {};
 
     if (!api_fetch_stock_data(symbol.c_str(), &data) ||
         !data.valid) {
@@ -107,7 +116,7 @@ bool fetch_one(const String &symbol)
 void process_refresh()
 {
     if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("[MARKET] Sin WiFi; se omite la ronda");
+        Serial.println("[MARKET] Sin WiFi");
         return;
     }
 
@@ -117,34 +126,77 @@ void process_refresh()
         count = MAX_TICKERS;
     }
 
-    Serial.printf(
-        "[MARKET] Actualizando %u tickers\n",
-        static_cast<unsigned int>(count)
-    );
-
     for (size_t i = 0; i < count; ++i) {
         String symbol = storage_get_ticker(i);
         symbol.trim();
         symbol.toUpperCase();
 
-        if (symbol.isEmpty()) {
-            continue;
+        if (!symbol.isEmpty()) {
+            fetch_one(symbol);
+            vTaskDelay(pdMS_TO_TICKS(100));
         }
-
-        fetch_one(symbol);
-
-        // No saturar el servidor ni el dispositivo.
-        vTaskDelay(pdMS_TO_TICKS(100));
     }
 
     Serial.println("[MARKET] Ronda terminada");
+}
+
+void process_validation(const MarketJob &job)
+{
+    String symbol = String(job.symbol);
+    StockData data = {};
+
+    bool ok =
+        api_fetch_stock_data(symbol.c_str(), &data) &&
+        data.valid;
+
+    if (ok) {
+        cache_store(data);
+    }
+
+    lock_market();
+
+    validation_symbol = symbol;
+    validation_data = data;
+    validation_success = ok;
+    validation_done = true;
+    validation_pending = false;
+
+    unlock_market();
+}
+
+void process_history(const MarketJob &job)
+{
+    String symbol = String(job.symbol);
+    HistoryData data = {};
+
+    bool ok = api_fetch_stock_history(
+        symbol.c_str(),
+        static_cast<HistoryPeriod>(job.period),
+        &data
+    );
+
+    if (!ok) {
+        data.valid = false;
+        data.count = 0;
+        data.symbol = symbol;
+        data.period =
+            static_cast<HistoryPeriod>(job.period);
+    }
+
+    lock_market();
+
+    history_result = data;
+    history_done = true;
+    history_pending = false;
+
+    unlock_market();
 }
 
 void market_worker(void *parameter)
 {
     (void)parameter;
 
-    MarketJob job;
+    MarketJob job = {};
 
     for (;;) {
         if (xQueueReceive(
@@ -158,40 +210,36 @@ void market_worker(void *parameter)
         worker_busy = true;
         unlock_market();
 
-        if (job.type == JOB_REFRESH) {
-            process_refresh();
+        switch (job.type) {
+            case JOB_REFRESH:
+                process_refresh();
 
-            lock_market();
-            refresh_pending = false;
-            unlock_market();
-        }
-        else if (job.type == JOB_VALIDATE) {
-            String symbol = String(job.symbol);
-            StockData data;
+                lock_market();
+                refresh_pending = false;
+                unlock_market();
+                break;
 
-            bool ok =
-                api_fetch_stock_data(symbol.c_str(), &data) &&
-                data.valid;
+            case JOB_VALIDATE:
+                process_validation(job);
+                break;
 
-            if (ok) {
-                cache_store(data);
-            }
+            case JOB_HISTORY:
+                process_history(job);
+                break;
 
-            lock_market();
-
-            validation_symbol = symbol;
-            validation_data = data;
-            validation_success = ok;
-            validation_done = true;
-            validation_pending = false;
-
-            unlock_market();
+            default:
+                break;
         }
 
         lock_market();
         worker_busy = false;
         unlock_market();
     }
+}
+
+bool enqueue_job(const MarketJob &job)
+{
+    return xQueueSend(job_queue, &job, 0) == pdTRUE;
 }
 
 } // namespace
@@ -205,14 +253,13 @@ void market_service_init()
     market_mutex = xSemaphoreCreateMutex();
 
     if (market_mutex == nullptr) {
-        Serial.println("[MARKET] No se pudo crear el mutex");
+        Serial.println("[MARKET] Error creando mutex");
         return;
     }
 
     job_queue = xQueueCreate(4, sizeof(MarketJob));
 
     if (job_queue == nullptr) {
-        Serial.println("[MARKET] No se pudo crear la cola");
         vSemaphoreDelete(market_mutex);
         market_mutex = nullptr;
         return;
@@ -221,14 +268,13 @@ void market_service_init()
     BaseType_t result = xTaskCreate(
         market_worker,
         "market_worker",
-        8192,
+        12288,
         nullptr,
         1,
         &market_task
     );
 
     if (result != pdPASS) {
-        Serial.println("[MARKET] No se pudo crear la tarea");
         vQueueDelete(job_queue);
         vSemaphoreDelete(market_mutex);
         job_queue = nullptr;
@@ -259,7 +305,7 @@ bool market_service_request_refresh()
     MarketJob job = {};
     job.type = JOB_REFRESH;
 
-    if (xQueueSend(job_queue, &job, 0) != pdTRUE) {
+    if (!enqueue_job(job)) {
         lock_market();
         refresh_pending = false;
         unlock_market();
@@ -277,13 +323,14 @@ bool market_service_is_busy()
 
     lock_market();
 
-    bool result =
+    bool busy =
         worker_busy ||
         refresh_pending ||
-        validation_pending;
+        validation_pending ||
+        history_pending;
 
     unlock_market();
-    return result;
+    return busy;
 }
 
 bool market_service_get_data(
@@ -332,7 +379,7 @@ bool market_service_validate_async(
     symbol.substring(0, SYMBOL_SIZE - 1)
           .toCharArray(job.symbol, sizeof(job.symbol));
 
-    if (xQueueSend(job_queue, &job, 0) != pdTRUE) {
+    if (!enqueue_job(job)) {
         lock_market();
         validation_pending = false;
         unlock_market();
@@ -361,9 +408,66 @@ bool market_service_take_validation_result(
     symbol = validation_symbol;
     data = validation_data;
     success = validation_success;
-
     validation_done = false;
+
+    unlock_market();
+    return true;
+}
+
+bool market_service_request_history(
+    const String &symbol,
+    HistoryPeriod period)
+{
+    if (!initialized ||
+        symbol.isEmpty() ||
+        period >= HISTORY_PERIOD_COUNT) {
+        return false;
+    }
+
+    lock_market();
+
+    if (history_pending || history_done) {
+        unlock_market();
+        return false;
+    }
+
+    history_pending = true;
     unlock_market();
 
+    MarketJob job = {};
+    job.type = JOB_HISTORY;
+    job.period = static_cast<uint8_t>(period);
+
+    symbol.substring(0, SYMBOL_SIZE - 1)
+          .toCharArray(job.symbol, sizeof(job.symbol));
+
+    if (!enqueue_job(job)) {
+        lock_market();
+        history_pending = false;
+        unlock_market();
+        return false;
+    }
+
+    return true;
+}
+
+bool market_service_take_history_result(
+    HistoryData &out)
+{
+    if (!initialized) {
+        return false;
+    }
+
+    lock_market();
+
+    if (!history_done) {
+        unlock_market();
+        return false;
+    }
+
+    out = history_result;
+    history_done = false;
+
+    unlock_market();
     return true;
 }

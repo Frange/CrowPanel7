@@ -245,8 +245,8 @@ bool storage_remove_ticker(size_t index)
     }
 
     for (size_t i = index; i + 1 < count; ++i) {
-        char current_key[8];
-        char next_key[8];
+        char current_key[12];
+        char next_key[12];
 
         snprintf(current_key, sizeof(current_key), "t%u",
                  (unsigned int)i);
@@ -262,7 +262,7 @@ bool storage_remove_ticker(size_t index)
         }
     }
 
-    char last_key[8];
+    char last_key[12];
     snprintf(last_key, sizeof(last_key), "t%u",
              (unsigned int)(count - 1));
 

@@ -22,3 +22,12 @@ bool market_service_take_validation_result(
     StockData &data,
     bool &success
 );
+
+bool market_service_request_history(
+    const String &symbol,
+    HistoryPeriod period
+);
+
+bool market_service_take_history_result(
+    HistoryData &out
+);

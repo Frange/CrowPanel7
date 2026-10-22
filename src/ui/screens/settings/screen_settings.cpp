@@ -1,7 +1,7 @@
 #include "screen_settings.h"
-#include "../ui_manager.h"
-#include "../ui_keyboard.h"
-#include "../../services/storage_service.h"
+#include "../../ui_manager.h"
+#include "../../ui_keyboard.h"
+#include "../../../services/storage_service.h"
 
 #include <WiFi.h>
 

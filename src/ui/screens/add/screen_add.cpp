@@ -4,11 +4,11 @@
 #include <Arduino.h>
 #include <WiFi.h>
 
-#include "../ui_manager.h"
-#include "../ui_keyboard.h"
+#include "../../ui_manager.h"
+#include "../../ui_keyboard.h"
 
-#include "../../services/storage_service.h"
-#include "../../services/market_service.h"
+#include "../../../services/storage_service.h"
+#include "../../../services/market_service.h"
 
 static lv_obj_t *add_status_label = nullptr;
 static lv_timer_t *validation_timer = nullptr;
