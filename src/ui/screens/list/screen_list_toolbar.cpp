@@ -1,9 +1,18 @@
+
 #include <lvgl.h>
 
 #include "screen_list_toolbar.h"
 #include "screen_list_styles.h"
 #include "screen_list_internal.h"
 #include "screen_list_events.h"
+
+#include "../../ui_manager.h"
+
+static void wifi_button_event_cb(lv_event_t *e)
+{
+    (void)e;
+    ui_change_screen(SCREEN_WIFI);
+}
 
 lv_obj_t *screen_list_toolbar_create(lv_obj_t *parent)
 {
@@ -20,7 +29,9 @@ lv_obj_t *screen_list_toolbar_create(lv_obj_t *parent)
     lv_label_set_text(title, "Mi Portafolio");
     apply_label(title, TEXT);
 
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(
+        title, &lv_font_montserrat_14, 0
+    );
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 10, 0);
 
     auto create_button = [toolbar](
@@ -32,7 +43,9 @@ lv_obj_t *screen_list_toolbar_create(lv_obj_t *parent)
         lv_obj_t *button = lv_btn_create(toolbar);
 
         lv_obj_set_size(button, 48, 48);
-        lv_obj_align(button, LV_ALIGN_RIGHT_MID, x_offset, 0);
+        lv_obj_align(
+            button, LV_ALIGN_RIGHT_MID, x_offset, 0
+        );
         apply_button(button, color);
 
         lv_obj_add_event_cb(
@@ -49,21 +62,47 @@ lv_obj_t *screen_list_toolbar_create(lv_obj_t *parent)
         return button;
     };
 
-    screen_list_state.wifi_indicator = lv_label_create(toolbar);
+    // Botón WiFi: conserva la etiqueta que actualiza
+    // screen_list_update_wifi_indicator().
+    lv_obj_t *wifi_button = lv_btn_create(toolbar);
 
-    lv_obj_set_width(screen_list_state.wifi_indicator, 140);
+    lv_obj_set_size(wifi_button, 140, 44);
+    lv_obj_align(
+        wifi_button,
+        LV_ALIGN_RIGHT_MID,
+        -178,
+        0
+    );
+
+    apply_button(wifi_button, BUTTON_BG);
+
+    lv_obj_add_event_cb(
+        wifi_button,
+        wifi_button_event_cb,
+        LV_EVENT_CLICKED,
+        nullptr
+    );
+
+    screen_list_state.wifi_indicator =
+        lv_label_create(wifi_button);
+
+    lv_obj_set_width(
+        screen_list_state.wifi_indicator, 140
+    );
+
     lv_obj_set_style_text_font(
         screen_list_state.wifi_indicator,
         &lv_font_montserrat_14,
         0
     );
 
-    lv_obj_align(
+    lv_obj_set_style_text_align(
         screen_list_state.wifi_indicator,
-        LV_ALIGN_RIGHT_MID,
-        -178,
+        LV_TEXT_ALIGN_CENTER,
         0
     );
+
+    lv_obj_center(screen_list_state.wifi_indicator);
 
     create_button(
         LV_SYMBOL_SETTINGS,

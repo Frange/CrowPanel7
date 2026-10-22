@@ -10,6 +10,12 @@
 
 #include "display_config.h"
 
+#if LV_INDEV_DEF_READ_PERIOD == 10
+#pragma message("LVGL: intervalo tactil configurado a 10 ms")
+#else
+#pragma message("LVGL: se esta usando otro intervalo tactil")
+#endif
+
 class LGFX : public lgfx::LGFX_Device {
 public:
     lgfx::Panel_RGB _panel_instance;
@@ -321,7 +327,7 @@ void display_init() {
     if (gt_ok) {
         // Aumentar la velocidad tras detectar correctamente el GT911.
         Wire.setClock(200000);
-        Serial.println("[TOUCH] GT911 listo a 100 kHz");
+        Serial.println("[TOUCH] GT911 listo a 200 kHz");
     } else {
         Serial.println("[TOUCH] No se pudo inicializar el GT911");
         i2c_scan();
@@ -355,13 +361,13 @@ void display_init() {
     disp_drv.draw_buf = &draw_buf;
     lv_disp_drv_register(&disp_drv);
 
-    static lv_indev_drv_t indev_drv;
-    lv_indev_drv_init(&indev_drv);
+static lv_indev_drv_t indev_drv;
+lv_indev_drv_init(&indev_drv);
 
-    indev_drv.type = LV_INDEV_TYPE_POINTER;
-    indev_drv.read_cb = touchpad_read;
+indev_drv.type = LV_INDEV_TYPE_POINTER;
+indev_drv.read_cb = touchpad_read;
 
-    lv_indev_drv_register(&indev_drv);
+lv_indev_drv_register(&indev_drv);
 
     Serial.println("[LCD] Display y Tactil LVGL registrados");
 }

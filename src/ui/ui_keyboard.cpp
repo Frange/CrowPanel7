@@ -51,7 +51,38 @@ lv_obj_t *ui_keyboard_attach(
     lv_keyboard_set_mode(keyboard, mode);
     lv_keyboard_set_textarea(keyboard, textarea);
 
-    // Ocultar inicialmente y mostrarlo al seleccionar el campo.
+    // Conservar los colores predeterminados de LVGL,
+    // pero eliminar las transiciones animadas de estilo.
+    lv_style_transition_dsc_t *no_transition = nullptr;
+    (void)no_transition;
+
+    static const lv_style_prop_t no_props[] = {
+        LV_STYLE_PROP_INV
+    };
+
+    static lv_style_transition_dsc_t transition;
+    lv_style_transition_dsc_init(
+        &transition,
+        no_props,
+        lv_anim_path_linear,
+        0,
+        0,
+        nullptr
+    );
+
+    lv_obj_set_style_transition(
+        keyboard,
+        &transition,
+        LV_PART_ITEMS | LV_STATE_DEFAULT
+    );
+
+    lv_obj_set_style_transition(
+        keyboard,
+        &transition,
+        LV_PART_ITEMS | LV_STATE_PRESSED
+    );
+
+    // Ocultar inicialmente.
     lv_obj_add_flag(keyboard, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_add_event_cb(
@@ -84,3 +115,4 @@ lv_obj_t *ui_keyboard_attach(
 
     return keyboard;
 }
+

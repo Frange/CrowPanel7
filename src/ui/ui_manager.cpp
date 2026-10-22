@@ -1,8 +1,10 @@
 
 #include "ui_manager.h"
+
 #include "screens/list/screen_list.h"
 #include "screens/detail/screen_detail.h"
 #include "screens/add/screen_add.h"
+#include "screens/wifi/screen_wifi.h"
 #include "screens/settings/screen_settings.h"
 
 static lv_obj_t *current_screen = nullptr;
@@ -33,6 +35,10 @@ void ui_change_screen(ScreenState state)
             new_screen = screen_add_create();
             break;
 
+        case SCREEN_WIFI:
+            new_screen = screen_wifi_create();
+            break;
+
         case SCREEN_SETTINGS:
             new_screen = screen_settings_create();
             break;
@@ -47,11 +53,9 @@ void ui_change_screen(ScreenState state)
 
     lv_obj_t *old_screen = current_screen;
 
-    // Cambiar inmediatamente, sin fundido.
     lv_scr_load(new_screen);
     current_screen = new_screen;
 
-    // Eliminar la pantalla anterior de forma segura.
     if (old_screen != nullptr && old_screen != new_screen) {
         lv_obj_del_async(old_screen);
     }

@@ -1,3 +1,4 @@
+
 #ifndef UI_MANAGER_H
 #define UI_MANAGER_H
 
@@ -7,6 +8,7 @@ enum ScreenState {
     SCREEN_LIST,
     SCREEN_DETAIL,
     SCREEN_ADD,
+    SCREEN_WIFI,
     SCREEN_SETTINGS
 };
 

@@ -26,9 +26,9 @@ lv_obj_t *screen_list_header_create(lv_obj_t *parent)
 
     const Column columns[] = {
         {"SIMBOLO",    8,   100, false},
-        {"ACTUAL",     145, 110, false},
+        {"CIERRE ANT.",145, 110, false},
         {"APERTURA",   290, 110, false},
-        {"CIERRE ANT.",435, 110, false},
+        {"ACTUAL",435, 110, false},
         {"CAMBIO",     -48, 75,  true}
     };
 
@@ -95,9 +95,10 @@ lv_obj_t *screen_list_row_create(
         bool right;
     } columns[] = {
         {&state.ticker_labels[index], symbol.c_str(), 8, 100, TEXT, false},
-        {&state.price_labels[index], "--", 145, 110, TEXT, false},
+        {&state.close_labels[index], "--", 145, 110, TEXT, false},
         {&state.open_labels[index], "--", 290, 110, TEXT_SECONDARY, false},
-        {&state.close_labels[index], "--", 435, 110, TEXT_SECONDARY, false},
+        {&state.price_labels[index], "--", 435, 110, TEXT_SECONDARY, false},
+
         {&state.change_labels[index], "--", -48, 75, TEXT_MUTED, true}
     };
 
