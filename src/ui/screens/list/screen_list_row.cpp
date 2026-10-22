@@ -1,3 +1,4 @@
+
 #include <Arduino.h>
 #include <lvgl.h>
 
@@ -25,11 +26,11 @@ lv_obj_t *screen_list_header_create(lv_obj_t *parent)
     };
 
     const Column columns[] = {
-        {"SIMBOLO",    8,   100, false},
-        {"CIERRE ANT.",145, 110, false},
-        {"APERTURA",   290, 110, false},
-        {"ACTUAL",435, 110, false},
-        {"CAMBIO",     -48, 75,  true}
+        {"SIMBOLO",     8,   100, false},
+        {"CIERRE ANT.", 145, 110, false},
+        {"APERTURA",    290, 110, false},
+        {"ACTUAL",     435, 110, false},
+        {"CAMBIO",     40,  190, true}
     };
 
     for (const auto &column : columns) {
@@ -86,6 +87,8 @@ lv_obj_t *screen_list_row_create(
 
     apply_row(row, index);
 
+    // Columnas de la fila.
+    // La columna CAMBIO termina antes del botón de papelera.
     const struct {
         lv_obj_t **target;
         const char *text;
@@ -94,37 +97,94 @@ lv_obj_t *screen_list_row_create(
         uint32_t color;
         bool right;
     } columns[] = {
-        {&state.ticker_labels[index], symbol.c_str(), 8, 100, TEXT, false},
-        {&state.close_labels[index], "--", 145, 110, TEXT, false},
-        {&state.open_labels[index], "--", 290, 110, TEXT_SECONDARY, false},
-        {&state.price_labels[index], "--", 435, 110, TEXT_SECONDARY, false},
-
-        {&state.change_labels[index], "--", -48, 75, TEXT_MUTED, true}
+        {&state.ticker_labels[index], symbol.c_str(), 8,   100, TEXT,           false},
+        {&state.close_labels[index],  "--",          145, 110, TEXT,           false},
+        {&state.open_labels[index],   "--",          290, 110, TEXT_SECONDARY, false},
+        {&state.price_labels[index],  "--",          435, 110, TEXT_SECONDARY, false},
+        {&state.change_labels[index], "--",          -42, 190, TEXT_MUTED,     true}
     };
 
     for (const auto &column : columns) {
         *column.target = lv_label_create(row);
 
-        lv_label_set_text(*column.target, column.text);
-        lv_obj_set_width(*column.target, column.width);
-        apply_label(*column.target, column.color);
+        lv_label_set_text(
+            *column.target,
+            column.text
+        );
+
+        lv_obj_set_width(
+            *column.target,
+            column.width
+        );
+
+        apply_label(
+            *column.target,
+            column.color
+        );
 
         lv_obj_align(
             *column.target,
-            column.right ? LV_ALIGN_RIGHT_MID : LV_ALIGN_LEFT_MID,
+            column.right
+                ? LV_ALIGN_RIGHT_MID
+                : LV_ALIGN_LEFT_MID,
             column.x,
             0
         );
     }
 
+    // CAMBIO: importe absoluto y porcentaje en una sola línea.
+    lv_label_set_long_mode(
+        state.change_labels[index],
+        LV_LABEL_LONG_CLIP
+    );
+
+    lv_obj_set_style_text_align(
+        state.change_labels[index],
+        LV_TEXT_ALIGN_CENTER,
+        0
+    );
+
+    lv_obj_set_style_text_font(
+        state.change_labels[index],
+        &lv_font_montserrat_14,
+        0
+    );
+
+    // Ocultar la antigua etiqueta del importe si todavía existe.
+    // El importe y el porcentaje se escriben ahora en change_labels.
+    if (state.change_amount_labels[index] != nullptr) {
+        lv_obj_add_flag(
+            state.change_amount_labels[index],
+            LV_OBJ_FLAG_HIDDEN
+        );
+    }
+
+    // Botón para borrar el ticker.
     state.delete_buttons[index] = lv_btn_create(row);
 
-    lv_obj_set_size(state.delete_buttons[index], 32, 32);
-    lv_obj_align(state.delete_buttons[index], LV_ALIGN_RIGHT_MID, -4, 0);
+    lv_obj_set_size(
+        state.delete_buttons[index],
+        32,
+        32
+    );
 
-    apply_button(state.delete_buttons[index], DELETE_BG);
+    lv_obj_align(
+        state.delete_buttons[index],
+        LV_ALIGN_RIGHT_MID,
+        -4,
+        0
+    );
 
-    lv_obj_set_style_radius(state.delete_buttons[index], 6, 0);
+    apply_button(
+        state.delete_buttons[index],
+        DELETE_BG
+    );
+
+    lv_obj_set_style_radius(
+        state.delete_buttons[index],
+        6,
+        0
+    );
 
     lv_obj_add_event_cb(
         state.delete_buttons[index],
@@ -133,8 +193,15 @@ lv_obj_t *screen_list_row_create(
         reinterpret_cast<void *>(static_cast<uintptr_t>(index))
     );
 
-    lv_obj_t *icon = lv_label_create(state.delete_buttons[index]);
-    lv_label_set_text(icon, LV_SYMBOL_TRASH);
+    lv_obj_t *icon = lv_label_create(
+        state.delete_buttons[index]
+    );
+
+    lv_label_set_text(
+        icon,
+        LV_SYMBOL_TRASH
+    );
+
     lv_obj_center(icon);
 
     return row;

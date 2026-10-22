@@ -20,6 +20,7 @@ struct ScreenListState {
     lv_obj_t *close_labels[MAX_ROWS] = {};
     lv_obj_t *change_labels[MAX_ROWS] = {};
     lv_obj_t *delete_buttons[MAX_ROWS] = {};
+    lv_obj_t *change_amount_labels[MAX_ROWS] = {};
 
     lv_timer_t *timer = nullptr;
 

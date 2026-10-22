@@ -109,17 +109,26 @@ void screen_list_update_rows()
         lv_obj_clear_flag(row, LV_OBJ_FLAG_HIDDEN);
 
         String symbol = storage_get_ticker(i);
-        StockData data;
+        StockData data = {};
 
         if (symbol.isEmpty() ||
             !market_service_get_data(symbol, data)) {
 
-            lv_label_set_text(state.ticker_labels[i],
-                              symbol.c_str());
+            lv_label_set_text(
+                state.ticker_labels[i],
+                symbol.c_str()
+            );
             lv_label_set_text(state.price_labels[i], "--");
             lv_label_set_text(state.open_labels[i], "--");
             lv_label_set_text(state.close_labels[i], "--");
             lv_label_set_text(state.change_labels[i], "--");
+
+            if (state.change_amount_labels[i] != nullptr) {
+                lv_label_set_text(
+                    state.change_amount_labels[i],
+                    "--"
+                );
+            }
 
             continue;
         }
@@ -130,12 +139,16 @@ void screen_list_update_rows()
         );
 
         char price_text[64];
-        char open_text[32];
-        char close_text[32];
+        char open_text[64];
+        char close_text[64];
         char change_text[32];
+        char amount_text[64];
 
+        // --------------------------------------------------
+        // Precio actual
+        // --------------------------------------------------
         if (isfinite(data.price)) {
-            if (data.currency.length() > 0) {
+            if (!data.currency.isEmpty()) {
                 snprintf(
                     price_text,
                     sizeof(price_text),
@@ -155,47 +168,53 @@ void screen_list_update_rows()
             snprintf(price_text, sizeof(price_text), "--");
         }
 
+        // --------------------------------------------------
+        // Precio de apertura
+        // --------------------------------------------------
         if (isfinite(data.open)) {
-    if (!data.currency.isEmpty()) {
-        snprintf(
-            open_text,
-            sizeof(open_text),
-            "%.2f %s",
-            data.open,
-            data.currency.c_str()
-        );
-    } else {
-        snprintf(
-            open_text,
-            sizeof(open_text),
-            "%.2f",
-            data.open
-        );
-    }
-} else {
-    snprintf(open_text, sizeof(open_text), "--");
-}
+            if (!data.currency.isEmpty()) {
+                snprintf(
+                    open_text,
+                    sizeof(open_text),
+                    "%.2f %s",
+                    data.open,
+                    data.currency.c_str()
+                );
+            } else {
+                snprintf(
+                    open_text,
+                    sizeof(open_text),
+                    "%.2f",
+                    data.open
+                );
+            }
+        } else {
+            snprintf(open_text, sizeof(open_text), "--");
+        }
 
+        // --------------------------------------------------
+        // Cierre anterior
+        // --------------------------------------------------
         if (isfinite(data.previous_close)) {
-    if (!data.currency.isEmpty()) {
-        snprintf(
-            close_text,
-            sizeof(close_text),
-            "%.2f %s",
-            data.previous_close,
-            data.currency.c_str()
-        );
-    } else {
-        snprintf(
-            close_text,
-            sizeof(close_text),
-            "%.2f",
-            data.previous_close
-        );
-    }
-} else {
-    snprintf(close_text, sizeof(close_text), "--");
-}
+            if (!data.currency.isEmpty()) {
+                snprintf(
+                    close_text,
+                    sizeof(close_text),
+                    "%.2f %s",
+                    data.previous_close,
+                    data.currency.c_str()
+                );
+            } else {
+                snprintf(
+                    close_text,
+                    sizeof(close_text),
+                    "%.2f",
+                    data.previous_close
+                );
+            }
+        } else {
+            snprintf(close_text, sizeof(close_text), "--");
+        }
 
         lv_label_set_text(
             state.price_labels[i],
@@ -212,45 +231,70 @@ void screen_list_update_rows()
             close_text
         );
 
-        if (isfinite(data.change_percent)) {
-            snprintf(
-                change_text,
-                sizeof(change_text),
-                "%+.2f%%",
-                data.change_percent
-            );
+        // --------------------------------------------------
+// Variación monetaria y porcentual en una sola línea
+// --------------------------------------------------
+if (isfinite(data.change_percent) &&
+    isfinite(data.price) &&
+    isfinite(data.previous_close)) {
 
-            lv_label_set_text(
-                state.change_labels[i],
-                change_text
-            );
+    const float difference =
+        data.price - data.previous_close;
 
-            uint32_t color =
-                data.change_percent > 0.001f
-                    ? 0x55DD88
-                    : data.change_percent < -0.001f
-                        ? 0xFF6666
-                        : 0xCCCCCC;
-
-            lv_obj_set_style_text_color(
-                state.change_labels[i],
-                lv_color_hex(color),
-                0
-            );
-        } else {
-            lv_label_set_text(
-                state.change_labels[i],
-                "--"
-            );
-
-            lv_obj_set_style_text_color(
-                state.change_labels[i],
-                lv_color_hex(0xAAAAAA),
-                0
-            );
-        }
+    if (!data.currency.isEmpty()) {
+        snprintf(
+            change_text,
+            sizeof(change_text),
+            "%+.2f %s (%+.2f%%)",
+            difference,
+            data.currency.c_str(),
+            data.change_percent
+        );
+    } else {
+        snprintf(
+            change_text,
+            sizeof(change_text),
+            "%+.2f (%+.2f%%)",
+            difference,
+            data.change_percent
+        );
     }
 
+    lv_label_set_text(
+        state.change_labels[i],
+        change_text
+    );
+
+    uint32_t color =
+        difference > 0.001f
+            ? 0x55DD88
+            : difference < -0.001f
+                ? 0xFF6666
+                : 0xCCCCCC;
+
+    lv_obj_set_style_text_color(
+        state.change_labels[i],
+        lv_color_hex(color),
+        0
+    );
+
+} else {
+    lv_label_set_text(
+        state.change_labels[i],
+        "--"
+    );
+
+    lv_obj_set_style_text_color(
+        state.change_labels[i],
+        lv_color_hex(0xAAAAAA),
+        0
+    );
+}
+    }
+
+    // --------------------------------------------------
+    // Mensaje cuando no hay valores guardados
+    // --------------------------------------------------
     if (state.empty_label != nullptr) {
         if (count == 0) {
             lv_obj_clear_flag(
