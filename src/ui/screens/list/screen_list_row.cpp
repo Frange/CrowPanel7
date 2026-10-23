@@ -30,7 +30,7 @@ lv_obj_t *screen_list_header_create(lv_obj_t *parent)
         {"CIERRE ANT.", 145, 110, false},
         {"APERTURA",    290, 110, false},
         {"ACTUAL",     435, 110, false},
-        {"CAMBIO",     40,  190, true}
+        {"CAMBIO",     25,  190, true}
     };
 
     for (const auto &column : columns) {
