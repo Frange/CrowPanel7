@@ -11,7 +11,7 @@
 
 namespace {
 
-constexpr size_t MAX_TICKERS = 40;
+constexpr size_t MAX_TICKERS = STORAGE_MAX_TICKERS;
 constexpr size_t SYMBOL_SIZE = 17;
 
 enum JobType : uint8_t {
@@ -45,6 +45,9 @@ bool history_pending = false;
 bool history_done = false;
 bool worker_busy = false;
 
+uint32_t data_version = 0;
+uint32_t last_refresh_ms = 0;
+
 String validation_symbol;
 StockData validation_data = {};
 bool validation_success = false;
@@ -74,23 +77,35 @@ void cache_store(const StockData &data)
     lock_market();
 
     int free_slot = -1;
+    int oldest_slot = -1;
+    uint32_t oldest_time = 0xFFFFFFFFu;
 
     for (size_t i = 0; i < MAX_TICKERS; ++i) {
-        if (cache[i].occupied &&
-            cache[i].data.symbol == data.symbol) {
-            cache[i].data = data;
-            unlock_market();
-            return;
-        }
+        if (cache[i].occupied) {
+            if (cache[i].data.symbol == data.symbol) {
+                cache[i].data = data;
+                ++data_version;
+                unlock_market();
+                return;
+            }
 
-        if (!cache[i].occupied && free_slot < 0) {
+            if (cache[i].data.updated_at < oldest_time) {
+                oldest_time = cache[i].data.updated_at;
+                oldest_slot = static_cast<int>(i);
+            }
+        } else if (free_slot < 0) {
             free_slot = static_cast<int>(i);
         }
     }
 
-    if (free_slot >= 0) {
-        cache[free_slot].occupied = true;
-        cache[free_slot].data = data;
+    // Si la cache esta llena (tickers borrados y anadidos a lo largo
+    // del tiempo) se reutiliza la entrada mas antigua.
+    int slot = free_slot >= 0 ? free_slot : oldest_slot;
+
+    if (slot >= 0) {
+        cache[slot].occupied = true;
+        cache[slot].data = data;
+        ++data_version;
     }
 
     unlock_market();
@@ -122,20 +137,19 @@ void process_refresh()
 
     size_t count = storage_ticker_count();
 
-    if (count > MAX_TICKERS) {
-        count = MAX_TICKERS;
-    }
-
     for (size_t i = 0; i < count; ++i) {
-        String symbol = storage_get_ticker(i);
-        symbol.trim();
-        symbol.toUpperCase();
+        String symbol = storage_normalize_ticker(storage_get_ticker(i));
 
         if (!symbol.isEmpty()) {
             fetch_one(symbol);
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(50));
         }
     }
+
+    lock_market();
+    last_refresh_ms = millis();
+    ++data_version;
+    unlock_market();
 
     Serial.println("[MARKET] Ronda terminada");
 }
@@ -179,8 +193,7 @@ void process_history(const MarketJob &job)
         data.valid = false;
         data.count = 0;
         data.symbol = symbol;
-        data.period =
-            static_cast<HistoryPeriod>(job.period);
+        data.period = static_cast<HistoryPeriod>(job.period);
     }
 
     lock_market();
@@ -199,10 +212,7 @@ void market_worker(void *parameter)
     MarketJob job = {};
 
     for (;;) {
-        if (xQueueReceive(
-                job_queue,
-                &job,
-                portMAX_DELAY) != pdTRUE) {
+        if (xQueueReceive(job_queue, &job, portMAX_DELAY) != pdTRUE) {
             continue;
         }
 
@@ -242,6 +252,12 @@ bool enqueue_job(const MarketJob &job)
     return xQueueSend(job_queue, &job, 0) == pdTRUE;
 }
 
+void copy_symbol(const String &symbol, MarketJob &job)
+{
+    symbol.substring(0, SYMBOL_SIZE - 1)
+          .toCharArray(job.symbol, sizeof(job.symbol));
+}
+
 } // namespace
 
 void market_service_init()
@@ -265,13 +281,16 @@ void market_service_init()
         return;
     }
 
-    BaseType_t result = xTaskCreate(
+    // Prioridad 1 en el nucleo 0: la UI (loopTask) queda en el nucleo 1
+    // sin competir con las descargas HTTPS.
+    BaseType_t result = xTaskCreatePinnedToCore(
         market_worker,
         "market_worker",
         12288,
         nullptr,
         1,
-        &market_task
+        &market_task,
+        0
     );
 
     if (result != pdPASS) {
@@ -333,6 +352,22 @@ bool market_service_is_busy()
     return busy;
 }
 
+uint32_t market_service_data_version()
+{
+    lock_market();
+    uint32_t version = data_version;
+    unlock_market();
+    return version;
+}
+
+uint32_t market_service_last_refresh_ms()
+{
+    lock_market();
+    uint32_t value = last_refresh_ms;
+    unlock_market();
+    return value;
+}
+
 bool market_service_get_data(
     const String &symbol,
     StockData &out)
@@ -356,8 +391,22 @@ bool market_service_get_data(
     return false;
 }
 
-bool market_service_validate_async(
-    const String &symbol)
+void market_service_clear_cache()
+{
+    lock_market();
+
+    for (size_t i = 0; i < MAX_TICKERS; ++i) {
+        cache[i].occupied = false;
+        cache[i].data = StockData{};
+    }
+
+    last_refresh_ms = 0;
+    ++data_version;
+
+    unlock_market();
+}
+
+bool market_service_validate_async(const String &symbol)
 {
     if (!initialized || symbol.isEmpty()) {
         return false;
@@ -365,19 +414,20 @@ bool market_service_validate_async(
 
     lock_market();
 
-    if (validation_pending || validation_done) {
+    if (validation_pending) {
         unlock_market();
         return false;
     }
 
+    // Un resultado anterior que nadie recogio no debe bloquear
+    // nuevas validaciones.
+    validation_done = false;
     validation_pending = true;
     unlock_market();
 
     MarketJob job = {};
     job.type = JOB_VALIDATE;
-
-    symbol.substring(0, SYMBOL_SIZE - 1)
-          .toCharArray(job.symbol, sizeof(job.symbol));
+    copy_symbol(symbol, job);
 
     if (!enqueue_job(job)) {
         lock_market();
@@ -426,20 +476,21 @@ bool market_service_request_history(
 
     lock_market();
 
-    if (history_pending || history_done) {
+    if (history_pending) {
         unlock_market();
         return false;
     }
 
+    // Descartar un historico anterior que no se llego a consumir
+    // (por ejemplo, si se salio del detalle antes de que llegara).
+    history_done = false;
     history_pending = true;
     unlock_market();
 
     MarketJob job = {};
     job.type = JOB_HISTORY;
     job.period = static_cast<uint8_t>(period);
-
-    symbol.substring(0, SYMBOL_SIZE - 1)
-          .toCharArray(job.symbol, sizeof(job.symbol));
+    copy_symbol(symbol, job);
 
     if (!enqueue_job(job)) {
         lock_market();
@@ -451,8 +502,7 @@ bool market_service_request_history(
     return true;
 }
 
-bool market_service_take_history_result(
-    HistoryData &out)
+bool market_service_take_history_result(HistoryData &out)
 {
     if (!initialized) {
         return false;

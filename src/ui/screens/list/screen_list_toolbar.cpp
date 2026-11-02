@@ -4,7 +4,6 @@
 #include "screen_list_toolbar.h"
 #include "screen_list_styles.h"
 #include "screen_list_internal.h"
-#include "screen_list_events.h"
 
 #include "../../ui_manager.h"
 
@@ -20,7 +19,7 @@ lv_obj_t *screen_list_toolbar_create(lv_obj_t *parent)
 
     lv_obj_t *toolbar = lv_obj_create(parent);
 
-    lv_obj_set_size(toolbar, SCREEN_WIDTH, TOOLBAR_HEIGHT);
+    lv_obj_set_size(toolbar, LIST_WIDTH, TOOLBAR_HEIGHT);
     lv_obj_align(toolbar, LV_ALIGN_TOP_MID, 0, 0);
 
     apply_toolbar(toolbar);

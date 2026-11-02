@@ -11,6 +11,7 @@
 #include "../../../services/market_service.h"
 
 static lv_obj_t *add_status_label = nullptr;
+static lv_obj_t *save_button = nullptr;
 static lv_timer_t *validation_timer = nullptr;
 static String pending_ticker;
 static bool validation_in_progress = false;
@@ -29,34 +30,6 @@ static void set_status(const char *message, uint32_t color)
     );
 }
 
-static bool ticker_format_valid(String ticker)
-{
-    ticker.trim();
-    ticker.toUpperCase();
-
-    if (ticker.isEmpty() || ticker.length() > 16) {
-        return false;
-    }
-
-    bool has_alphanumeric = false;
-
-    for (size_t i = 0; i < ticker.length(); ++i) {
-        char c = ticker.charAt(i);
-
-        bool alpha = c >= 'A' && c <= 'Z';
-        bool digit = c >= '0' && c <= '9';
-
-        if (alpha || digit) {
-            has_alphanumeric = true;
-        } else if (c != '.' && c != '-' &&
-                   c != '^' && c != '=') {
-            return false;
-        }
-    }
-
-    return has_alphanumeric;
-}
-
 static void stop_validation_timer()
 {
     if (validation_timer != nullptr) {
@@ -67,15 +40,32 @@ static void stop_validation_timer()
     validation_in_progress = false;
 }
 
-static void back_btn_event_cb(lv_event_t *e)
+static void screen_delete_cb(lv_event_t *e)
 {
     (void)e;
 
     stop_validation_timer();
     add_status_label = nullptr;
     pending_ticker = "";
+}
 
+static void back_btn_event_cb(lv_event_t *e)
+{
+    (void)e;
     ui_change_screen(SCREEN_LIST);
+}
+
+// La tecla OK del teclado valida igual que el boton.
+static void keyboard_ready_cb(lv_event_t *e)
+{
+    lv_obj_t *keyboard = lv_event_get_target(e);
+    lv_obj_t *ta = lv_keyboard_get_textarea(keyboard);
+
+    if (ta == nullptr || save_button == nullptr) {
+        return;
+    }
+
+    lv_event_send(save_button, LV_EVENT_CLICKED, nullptr);
 }
 
 static void validation_timer_cb(lv_timer_t *timer)
@@ -133,7 +123,6 @@ static void validation_timer_cb(lv_timer_t *timer)
     );
 
     pending_ticker = "";
-    add_status_label = nullptr;
 
     ui_change_screen(SCREEN_LIST);
 }
@@ -151,11 +140,10 @@ static void save_btn_event_cb(lv_event_t *e)
         return;
     }
 
-    String ticker = lv_textarea_get_text(ta);
-    ticker.trim();
-    ticker.toUpperCase();
+    String ticker =
+        storage_normalize_ticker(lv_textarea_get_text(ta));
 
-    if (!ticker_format_valid(ticker)) {
+    if (!storage_ticker_format_valid(ticker)) {
         set_status(
             "Simbolo no valido. Ejemplos: AAPL, SPY o ZAL.DE",
             0xFF5555
@@ -205,6 +193,9 @@ lv_obj_t *screen_add_create()
 
     lv_obj_t *scr = lv_obj_create(nullptr);
     add_status_label = nullptr;
+    save_button = nullptr;
+
+    lv_obj_add_event_cb(scr, screen_delete_cb, LV_EVENT_DELETE, nullptr);
 
     lv_obj_set_style_bg_color(
         scr, lv_color_hex(0x121212), 0
@@ -297,6 +288,7 @@ lv_obj_t *screen_add_create()
     );
 
     lv_obj_t *btn_save = lv_btn_create(content);
+    save_button = btn_save;
     lv_obj_set_size(btn_save, 180, 42);
     lv_obj_align(btn_save, LV_ALIGN_TOP_MID, 0, 102);
 
@@ -325,15 +317,28 @@ lv_obj_t *screen_add_create()
     lv_obj_set_style_text_color(
         add_status_label, lv_color_hex(0xAAAAAA), 0
     );
+    lv_obj_set_style_text_align(
+        add_status_label, LV_TEXT_ALIGN_CENTER, 0
+    );
     lv_obj_align(
-        add_status_label, LV_ALIGN_BOTTOM_MID, 0, -8
+        add_status_label, LV_ALIGN_TOP_MID, 0, 152
     );
 
     lv_label_set_text(add_status_label, " ");
 
-    ui_keyboard_attach(
+    lv_obj_t *keyboard = ui_keyboard_attach(
         scr, ta, LV_KEYBOARD_MODE_TEXT_UPPER
     );
+
+    if (keyboard != nullptr) {
+        lv_obj_add_event_cb(
+            keyboard, keyboard_ready_cb, LV_EVENT_READY, nullptr
+        );
+    }
+
+    // Mostrar el teclado directamente: es lo unico que se hace aqui.
+    lv_obj_add_state(ta, LV_STATE_FOCUSED);
+    lv_event_send(ta, LV_EVENT_FOCUSED, nullptr);
 
     return scr;
 }

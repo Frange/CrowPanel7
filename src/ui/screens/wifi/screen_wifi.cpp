@@ -17,6 +17,7 @@ static lv_obj_t *keyboard = nullptr;
 
 static lv_timer_t *connect_timer = nullptr;
 static lv_timer_t *initial_scan_timer = nullptr;
+static lv_timer_t *scan_poll_timer = nullptr;
 
 static String scanned_ssids[30];
 static size_t scanned_count = 0;
@@ -27,6 +28,15 @@ static uint32_t connect_started_ms = 0;
 static void wifi_connect_timer_cb(lv_timer_t *timer);
 static void wifi_initial_scan_cb(lv_timer_t *timer);
 static void scan_wifi_event_cb(lv_event_t *e);
+static void scan_poll_timer_cb(lv_timer_t *timer);
+
+static void stop_scan_poll_timer()
+{
+    if (scan_poll_timer != nullptr) {
+        lv_timer_del(scan_poll_timer);
+        scan_poll_timer = nullptr;
+    }
+}
 
 static void stop_connect_timer()
 {
@@ -74,12 +84,13 @@ static void set_scanning_state(bool scanning)
     }
 }
 
-static void back_btn_event_cb(lv_event_t *e)
+static void screen_delete_cb(lv_event_t *e)
 {
     (void)e;
 
     stop_connect_timer();
     stop_initial_scan_timer();
+    stop_scan_poll_timer();
 
     wifi_list = nullptr;
     wifi_title = nullptr;
@@ -89,7 +100,11 @@ static void back_btn_event_cb(lv_event_t *e)
     password_textarea = nullptr;
     wifi_status_label = nullptr;
     keyboard = nullptr;
+}
 
+static void back_btn_event_cb(lv_event_t *e)
+{
+    (void)e;
     ui_change_screen(SCREEN_LIST);
 }
 
@@ -184,17 +199,33 @@ static void scan_wifi_event_cb(lv_event_t *e)
     lv_obj_clean(wifi_list);
     scanned_count = 0;
 
-    // Actualizar la pantalla antes de comenzar el escaneo.
-    lv_refr_now(nullptr);
-
+    // Escaneo asincrono: la interfaz sigue respondiendo mientras
+    // el WiFi busca redes (2-4 segundos).
     WiFi.mode(WIFI_STA);
     WiFi.scanDelete();
+    WiFi.scanNetworks(true, true);
 
-    // Escaneo síncrono: puede bloquear temporalmente LVGL.
-    int count = WiFi.scanNetworks(false, true);
+    stop_scan_poll_timer();
+    scan_poll_timer = lv_timer_create(scan_poll_timer_cb, 250, nullptr);
+}
 
-    // A partir de aquí, todos los resultados vuelven a
-    // habilitar el botón y ocultan el indicador de carga.
+static void scan_poll_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+
+    int count = WiFi.scanComplete();
+
+    if (count == WIFI_SCAN_RUNNING) {
+        return;
+    }
+
+    stop_scan_poll_timer();
+
+    if (wifi_list == nullptr || wifi_status_label == nullptr) {
+        WiFi.scanDelete();
+        return;
+    }
+
     if (count < 0) {
         set_scanning_state(false);
 
@@ -229,6 +260,10 @@ static void scan_wifi_event_cb(lv_event_t *e)
 
         if (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) {
             label += "  [abierta]";
+        }
+
+        if (WiFi.status() == WL_CONNECTED && WiFi.SSID() == ssid) {
+            label += "  " LV_SYMBOL_OK;
         }
 
         lv_obj_t *btn = lv_list_add_btn(
@@ -304,7 +339,7 @@ static void wifi_connect_timer_cb(lv_timer_t *timer)
 
         lv_label_set_text_fmt(
             wifi_status_label,
-            "¡Conectado con exito a %s! Credenciales guardadas.",
+            "Conectado con exito a %s. Credenciales guardadas.",
             selected_ssid.c_str()
         );
 
@@ -321,7 +356,7 @@ static void wifi_connect_timer_cb(lv_timer_t *timer)
     if ((uint32_t)(millis() - connect_started_ms) > 20000U) {
         lv_label_set_text(
             wifi_status_label,
-            "Error: No se pudo conectar. Comprueba la contraseña."
+            "Error: No se pudo conectar. Comprueba la contrasena."
         );
 
         lv_obj_set_style_text_color(
@@ -397,8 +432,11 @@ lv_obj_t *screen_wifi_create()
 {
     stop_connect_timer();
     stop_initial_scan_timer();
+    stop_scan_poll_timer();
 
     lv_obj_t *scr = lv_obj_create(nullptr);
+
+    lv_obj_add_event_cb(scr, screen_delete_cb, LV_EVENT_DELETE, nullptr);
 
     wifi_list = nullptr;
     wifi_title = nullptr;
@@ -599,13 +637,13 @@ lv_obj_t *screen_wifi_create()
     // Panel de contraseña
     password_panel = lv_obj_create(scr);
 
-    lv_obj_set_size(password_panel, 740, 210);
+    lv_obj_set_size(password_panel, 740, 205);
 
     lv_obj_align(
         password_panel,
         LV_ALIGN_TOP_MID,
         0,
-        85
+        70
     );
 
     lv_obj_set_style_bg_color(

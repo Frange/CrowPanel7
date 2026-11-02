@@ -7,6 +7,7 @@ constexpr size_t HISTORY_MAX_POINTS = 120;
 
 struct StockData {
     String symbol;
+    String name;        // nombre corto de la empresa / fondo
     String market;
     String currency;
 

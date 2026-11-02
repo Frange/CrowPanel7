@@ -409,6 +409,8 @@ void detail_chart_create(
     lv_obj_t *parent,
     const String &symbol)
 {
+    detail_chart_destroy();
+
     selected_symbol = symbol;
     selected_period = 0;
 
@@ -552,27 +554,25 @@ void detail_chart_create(
     request_selected_history();
 }
 
-void detail_chart_set_symbol(const String &symbol)
+// Llamar cuando se destruye la pantalla de detalle: para el timer y
+// olvida los widgets. Sin esto, un historico que llegara tarde
+// escribiria sobre un grafico ya borrado.
+void detail_chart_destroy()
 {
-    if (selected_symbol == symbol) {
-        return;
+    if (history_timer != nullptr) {
+        lv_timer_del(history_timer);
+        history_timer = nullptr;
     }
 
-    selected_symbol = symbol;
+    chart = nullptr;
+    series = nullptr;
+    status_label = nullptr;
+    value_label = nullptr;
 
-    clear_chart();
-
-    if (value_label != nullptr) {
-        lv_label_set_text(
-            value_label,
-            "Ultimo cierre: --"
-        );
+    for (int i = 0; i < PERIOD_COUNT; ++i) {
+        period_buttons[i] = nullptr;
     }
 
-    if (request_in_flight) {
-        show_status("Esperando cambio de simbolo...");
-        return;
-    }
-
-    request_selected_history();
+    request_in_flight = false;
+    requested_symbol = "";
 }

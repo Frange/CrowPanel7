@@ -1,4 +1,3 @@
-
 #ifndef UI_MANAGER_H
 #define UI_MANAGER_H
 
@@ -14,6 +13,8 @@ enum ScreenState {
 
 void ui_init();
 void ui_change_screen(ScreenState state);
-void ui_update();
+
+// Aplica el brillo configurado y cancela la atenuacion por inactividad.
+void ui_apply_brightness();
 
 #endif

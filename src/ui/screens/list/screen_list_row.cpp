@@ -5,7 +5,6 @@
 #include "screen_list_row.h"
 #include "screen_list_internal.h"
 #include "screen_list_styles.h"
-#include "screen_list_events.h"
 
 lv_obj_t *screen_list_header_create(lv_obj_t *parent)
 {
@@ -30,7 +29,7 @@ lv_obj_t *screen_list_header_create(lv_obj_t *parent)
         {"CIERRE ANT.", 145, 110, false},
         {"APERTURA",    290, 110, false},
         {"ACTUAL",     435, 110, false},
-        {"CAMBIO",     25,  190, true}
+        {"CAMBIO",     -42, 190, true}
     };
 
     for (const auto &column : columns) {
@@ -39,6 +38,10 @@ lv_obj_t *screen_list_header_create(lv_obj_t *parent)
         lv_label_set_text(label, column.title);
         lv_obj_set_width(label, column.width);
         apply_label(label, TEXT);
+
+        if (column.right) {
+            lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+        }
 
         lv_obj_align(
             label,
@@ -66,6 +69,7 @@ lv_obj_t *screen_list_row_create(
     auto &state = screen_list_state;
 
     lv_obj_t *row = lv_obj_create(parent);
+    state.rows[index] = row;
 
     lv_obj_set_size(row, ROW_WIDTH, ROW_HEIGHT);
 
@@ -149,15 +153,6 @@ lv_obj_t *screen_list_row_create(
         &lv_font_montserrat_14,
         0
     );
-
-    // Ocultar la antigua etiqueta del importe si todavía existe.
-    // El importe y el porcentaje se escriben ahora en change_labels.
-    if (state.change_amount_labels[index] != nullptr) {
-        lv_obj_add_flag(
-            state.change_amount_labels[index],
-            LV_OBJ_FLAG_HIDDEN
-        );
-    }
 
     // Botón para borrar el ticker.
     state.delete_buttons[index] = lv_btn_create(row);

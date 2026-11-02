@@ -8,8 +8,4 @@ void detail_chart_create(
     const String &symbol
 );
 
-void detail_chart_set_symbol(
-    const String &symbol
-);
-
 void detail_chart_destroy();

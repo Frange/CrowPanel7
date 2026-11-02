@@ -5,7 +5,6 @@
 
 namespace {
 
-lv_obj_t *market_label = nullptr;
 lv_obj_t *price_label = nullptr;
 lv_obj_t *change_label = nullptr;
 lv_obj_t *open_label = nullptr;
@@ -20,18 +19,15 @@ lv_obj_t *make_label(
     int x,
     int y,
     int width,
-    lv_color_t color)
+    lv_color_t color,
+    const lv_font_t *font = &lv_font_montserrat_14)
 {
     lv_obj_t *label = lv_label_create(parent);
     lv_label_set_text(label, text);
     lv_obj_set_width(label, width);
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(label, color, 0);
-    lv_obj_set_style_text_font(
-        label,
-        &lv_font_montserrat_14,
-        0
-    );
+    lv_obj_set_style_text_font(label, font, 0);
     lv_obj_align(label, LV_ALIGN_TOP_LEFT, x, y);
     return label;
 }
@@ -99,23 +95,18 @@ lv_obj_t *detail_quote_create(lv_obj_t *parent)
     lv_obj_set_style_pad_all(quote, 10, 0);
     lv_obj_clear_flag(quote, LV_OBJ_FLAG_SCROLLABLE);
 
-    market_label = make_label(
-        quote, "Mercado: --", 12, 0, 700,
-        lv_color_hex(0xAAAAAA)
-    );
-
     price_label = make_label(
-        quote, "--", 12, 22, 270,
-        lv_color_hex(0xFFFFFF)
+        quote, "--", 12, 4, 270,
+        lv_color_hex(0xFFFFFF), &lv_font_montserrat_24
     );
 
     change_label = make_label(
-        quote, "--", 12, 47, 180,
-        lv_color_hex(0x55DD88)
+        quote, "--", 12, 40, 180,
+        lv_color_hex(0x55DD88), &lv_font_montserrat_16
     );
 
     variation_label = make_label(
-        quote, "Variacion: --", 12, 73, 270,
+        quote, "Variacion: --", 12, 70, 270,
         lv_color_hex(0xAAAAAA)
     );
 
@@ -146,8 +137,11 @@ void detail_quote_update(
     const StockData &data,
     bool available)
 {
+    if (price_label == nullptr) {
+        return;
+    }
+
     if (!available || !data.valid) {
-        set_label(market_label, "Mercado: no disponible");
         set_label(price_label, "--");
         set_label(change_label, "--");
         set_label(open_label, "Apertura: --");
@@ -165,16 +159,6 @@ void detail_quote_update(
     }
 
     char text[112];
-
-    snprintf(
-        text,
-        sizeof(text),
-        "Mercado: %s",
-        data.market.isEmpty()
-            ? "No disponible"
-            : data.market.c_str()
-    );
-    set_label(market_label, text);
 
     format_price(
         text, sizeof(text), data.price, data.currency
@@ -236,4 +220,15 @@ void detail_quote_update(
         data.change, data.currency
     );
     set_label(variation_label, text);
+}
+
+void detail_quote_reset()
+{
+    price_label = nullptr;
+    change_label = nullptr;
+    open_label = nullptr;
+    high_label = nullptr;
+    low_label = nullptr;
+    close_label = nullptr;
+    variation_label = nullptr;
 }

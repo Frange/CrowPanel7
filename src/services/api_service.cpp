@@ -33,6 +33,7 @@ float json_float_or_nan(JsonVariantConst value)
 bool download_json(
     const String &url,
     JsonDocument &doc,
+    const JsonDocument &filter,
     const char *symbol)
 {
     if (WiFi.status() != WL_CONNECTED) {
@@ -114,8 +115,13 @@ bool download_json(
         return false;
     }
 
-    DeserializationError error =
-        deserializeJson(doc, body);
+    // Solo se conservan los campos que usamos: ahorra mucha RAM y
+    // tiempo de analisis con las respuestas grandes del historico.
+    DeserializationError error = deserializeJson(
+        doc,
+        body,
+        DeserializationOption::Filter(filter)
+    );
 
     if (error) {
         Serial.printf(
@@ -218,6 +224,53 @@ bool period_parameters(
 
 } // namespace
 
+// --------------------------------------------------
+// Filtros de campos para ArduinoJson
+// --------------------------------------------------
+
+void build_quote_filter(JsonDocument &filter)
+{
+    JsonObject result =
+        filter["chart"]["result"].add<JsonObject>();
+
+    JsonObject meta = result["meta"].to<JsonObject>();
+    meta["symbol"] = true;
+    meta["currency"] = true;
+    meta["exchangeName"] = true;
+    meta["fullExchangeName"] = true;
+    meta["shortName"] = true;
+    meta["longName"] = true;
+    meta["regularMarketPrice"] = true;
+    meta["chartPreviousClose"] = true;
+    meta["previousClose"] = true;
+    meta["regularMarketDayHigh"] = true;
+    meta["regularMarketDayLow"] = true;
+
+    JsonObject quote =
+        result["indicators"]["quote"].add<JsonObject>();
+    quote["open"] = true;
+    quote["high"] = true;
+    quote["low"] = true;
+    quote["close"] = true;
+
+    filter["chart"]["error"]["description"] = true;
+}
+
+void build_history_filter(JsonDocument &filter)
+{
+    JsonObject result =
+        filter["chart"]["result"].add<JsonObject>();
+
+    result["meta"]["symbol"] = true;
+    result["timestamp"] = true;
+
+    JsonObject quote =
+        result["indicators"]["quote"].add<JsonObject>();
+    quote["close"] = true;
+
+    filter["chart"]["error"]["description"] = true;
+}
+
 // ==================================================
 // COTIZACIÓN ACTUAL
 // ==================================================
@@ -249,11 +302,17 @@ bool api_fetch_stock_data(
         "https://query1.finance.yahoo.com/v8/finance/chart/";
 
     url += symbol;
-    url += "?range=1d&interval=5m";
+
+    // Una sola vela diaria: trae apertura, maximo, minimo y ultimo
+    // precio del dia en una respuesta de ~1 KB en vez de ~15 KB.
+    url += "?range=1d&interval=1d";
+
+    JsonDocument filter;
+    build_quote_filter(filter);
 
     JsonDocument doc;
 
-    if (!download_json(url, doc, symbol)) {
+    if (!download_json(url, doc, filter, symbol)) {
         return false;
     }
 
@@ -265,6 +324,11 @@ bool api_fetch_stock_data(
 
     out->symbol =
         meta["symbol"] | symbol;
+
+    out->name =
+        meta["shortName"] |
+        meta["longName"] |
+        "";
 
     out->market =
         meta["fullExchangeName"] |
@@ -449,9 +513,12 @@ bool api_fetch_stock_history(
     url += "&interval=";
     url += interval;
 
+    JsonDocument filter;
+    build_history_filter(filter);
+
     JsonDocument doc;
 
-    if (!download_json(url, doc, symbol)) {
+    if (!download_json(url, doc, filter, symbol)) {
         return false;
     }
 

@@ -5,7 +5,7 @@
 
 namespace ScreenListStyles {
 
-constexpr int SCREEN_WIDTH = 800;
+constexpr int LIST_WIDTH = 800;
 constexpr int TOOLBAR_HEIGHT = 65;
 constexpr int HEADER_WIDTH = 780;
 constexpr int HEADER_HEIGHT = 34;

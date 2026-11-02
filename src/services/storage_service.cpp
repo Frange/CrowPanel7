@@ -1,15 +1,78 @@
-
 #include "storage_service.h"
 
 #include <Arduino.h>
 #include <Preferences.h>
 #include <WiFi.h>
-#include <WiFiClient.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
-static Preferences preferences;
-static bool storage_ready = false;
+namespace {
 
-static String normalize_ticker(const String &input)
+Preferences preferences;
+bool storage_ready = false;
+
+// Copia en RAM de los tickers. La UI y el worker de mercado la leen,
+// asi que se protege con un mutex.
+String tickers[STORAGE_MAX_TICKERS];
+size_t ticker_count = 0;
+SemaphoreHandle_t tickers_mutex = nullptr;
+
+struct Lock {
+    Lock() {
+        if (tickers_mutex != nullptr) {
+            xSemaphoreTake(tickers_mutex, portMAX_DELAY);
+        }
+    }
+    ~Lock() {
+        if (tickers_mutex != nullptr) {
+            xSemaphoreGive(tickers_mutex);
+        }
+    }
+};
+
+void ticker_key(char *out, size_t size, size_t index)
+{
+    snprintf(out, size, "t%u", (unsigned int)index);
+}
+
+void load_tickers()
+{
+    uint32_t count = preferences.getUInt("ticker_count", 0);
+
+    if (count > STORAGE_MAX_TICKERS) {
+        Serial.printf(
+            "[STORAGE] Aviso: contador invalido (%lu)\n",
+            (unsigned long)count
+        );
+        count = 0;
+    }
+
+    Lock lock;
+
+    ticker_count = 0;
+
+    for (size_t i = 0; i < count; ++i) {
+        char key[12];
+        ticker_key(key, sizeof(key), i);
+
+        String value = preferences.getString(key, "");
+
+        if (value.isEmpty()) {
+            continue;
+        }
+
+        tickers[ticker_count++] = value;
+    }
+
+    Serial.printf(
+        "[STORAGE] %u tickers cargados\n",
+        (unsigned int)ticker_count
+    );
+}
+
+} // namespace
+
+String storage_normalize_ticker(const String &input)
 {
     String ticker = input;
     ticker.trim();
@@ -17,9 +80,9 @@ static String normalize_ticker(const String &input)
     return ticker;
 }
 
-static bool valid_ticker_format(const String &input)
+bool storage_ticker_format_valid(const String &input)
 {
-    String ticker = normalize_ticker(input);
+    String ticker = storage_normalize_ticker(input);
 
     if (ticker.isEmpty() || ticker.length() > 16) {
         return false;
@@ -49,6 +112,8 @@ void storage_init()
         return;
     }
 
+    tickers_mutex = xSemaphoreCreateMutex();
+
     storage_ready = preferences.begin("crow_app", false);
 
     if (!storage_ready) {
@@ -60,6 +125,8 @@ void storage_init()
     }
 
     Serial.println("[STORAGE] Preferences abierto correctamente");
+
+    load_tickers();
 
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(true);
@@ -81,45 +148,29 @@ void storage_init()
 
 size_t storage_ticker_count()
 {
-    if (!storage_ready) {
-        return 0;
-    }
-
-    uint32_t count = preferences.getUInt("ticker_count", 0);
-
-    if (count > 40) {
-        Serial.printf(
-            "[STORAGE] Aviso: contador invalido (%lu)\n",
-            (unsigned long)count
-        );
-        return 0;
-    }
-
-    return static_cast<size_t>(count);
+    Lock lock;
+    return ticker_count;
 }
 
 String storage_get_ticker(size_t index)
 {
-    if (!storage_ready || index >= storage_ticker_count()) {
+    Lock lock;
+
+    if (index >= ticker_count) {
         return String();
     }
 
-    char key[8];
-    snprintf(key, sizeof(key), "t%u", (unsigned int)index);
-
-    return preferences.getString(key, "");
+    return tickers[index];
 }
 
 bool storage_ticker_exists(const String &input)
 {
-    if (!storage_ready) {
-        return false;
-    }
+    String ticker = storage_normalize_ticker(input);
 
-    String ticker = normalize_ticker(input);
+    Lock lock;
 
-    for (size_t i = 0; i < storage_ticker_count(); ++i) {
-        if (storage_get_ticker(i) == ticker) {
+    for (size_t i = 0; i < ticker_count; ++i) {
+        if (tickers[i] == ticker) {
             return true;
         }
     }
@@ -130,15 +181,13 @@ bool storage_ticker_exists(const String &input)
 bool storage_add_ticker(const String &input)
 {
     if (!storage_ready) {
-        Serial.println(
-            "[STORAGE] ERROR: almacenamiento no inicializado"
-        );
+        Serial.println("[STORAGE] ERROR: almacenamiento no inicializado");
         return false;
     }
 
-    String ticker = normalize_ticker(input);
+    String ticker = storage_normalize_ticker(input);
 
-    if (!valid_ticker_format(ticker)) {
+    if (!storage_ticker_format_valid(ticker)) {
         Serial.println("[STORAGE] ERROR: formato de ticker invalido");
         return false;
     }
@@ -148,45 +197,106 @@ bool storage_add_ticker(const String &input)
         return false;
     }
 
-    size_t count = storage_ticker_count();
+    Lock lock;
 
-    if (count >= 40) {
-        Serial.println("[STORAGE] ERROR: limite de 40 tickers alcanzado");
+    if (ticker_count >= STORAGE_MAX_TICKERS) {
+        Serial.println("[STORAGE] ERROR: limite de tickers alcanzado");
         return false;
     }
 
-    char key[8];
-    snprintf(key, sizeof(key), "t%u", (unsigned int)count);
+    char key[12];
+    ticker_key(key, sizeof(key), ticker_count);
 
-    size_t bytes_written = preferences.putString(key, ticker);
-
-    if (bytes_written == 0) {
-        Serial.printf(
-            "[STORAGE] ERROR: fallo al escribir la clave %s\n",
-            key
-        );
+    if (preferences.putString(key, ticker) == 0) {
+        Serial.printf("[STORAGE] ERROR: fallo al escribir %s\n", key);
         return false;
     }
 
-    // Actualizar el contador únicamente después de escribir el ticker.
-    size_t counter_bytes = preferences.putUInt(
-        "ticker_count",
-        static_cast<uint32_t>(count + 1)
-    );
-
-    if (counter_bytes == 0) {
-        Serial.println(
-            "[STORAGE] ERROR: ticker escrito, pero fallo el contador"
-        );
+    // Actualizar el contador solo despues de escribir el ticker.
+    if (preferences.putUInt(
+            "ticker_count",
+            static_cast<uint32_t>(ticker_count + 1)) == 0) {
+        Serial.println("[STORAGE] ERROR: ticker escrito, pero fallo el contador");
         return false;
     }
+
+    tickers[ticker_count++] = ticker;
 
     Serial.printf(
         "[STORAGE] Ticker '%s' guardado en indice %u\n",
         ticker.c_str(),
-        (unsigned int)count
+        (unsigned int)(ticker_count - 1)
     );
 
+    return true;
+}
+
+bool storage_remove_ticker(size_t index)
+{
+    if (!storage_ready) {
+        return false;
+    }
+
+    Lock lock;
+
+    if (index >= ticker_count) {
+        return false;
+    }
+
+    // Desplazar en RAM y reescribir solo las claves afectadas.
+    for (size_t i = index; i + 1 < ticker_count; ++i) {
+        tickers[i] = tickers[i + 1];
+
+        char key[12];
+        ticker_key(key, sizeof(key), i);
+
+        if (preferences.putString(key, tickers[i]) == 0) {
+            Serial.println("[STORAGE] Error reordenando tickers");
+            return false;
+        }
+    }
+
+    char last_key[12];
+    ticker_key(last_key, sizeof(last_key), ticker_count - 1);
+    preferences.remove(last_key);
+
+    tickers[ticker_count - 1] = String();
+    --ticker_count;
+
+    if (preferences.putUInt(
+            "ticker_count",
+            static_cast<uint32_t>(ticker_count)) == 0) {
+        Serial.println("[STORAGE] Error actualizando contador");
+        return false;
+    }
+
+    Serial.printf(
+        "[STORAGE] Ticker del indice %u eliminado\n",
+        (unsigned int)index
+    );
+
+    return true;
+}
+
+bool storage_clear_tickers()
+{
+    if (!storage_ready) {
+        return false;
+    }
+
+    Lock lock;
+
+    for (size_t i = 0; i < ticker_count; ++i) {
+        char key[12];
+        ticker_key(key, sizeof(key), i);
+        preferences.remove(key);
+        tickers[i] = String();
+    }
+
+    ticker_count = 0;
+    preferences.putUInt("ticker_count", 0);
+
+    Serial.println("[STORAGE] Todos los tickers eliminados");
     return true;
 }
 
@@ -201,25 +311,17 @@ void storage_save_wifi_credentials(
     }
 
     size_t ssid_bytes = preferences.putString("wifi_ssid", ssid);
-    size_t pass_bytes = preferences.putString("wifi_pass", password);
+    preferences.putString("wifi_pass", password);
 
-    if (ssid_bytes == 0 || pass_bytes == 0) {
-        Serial.println(
-            "[STORAGE] ERROR: no se pudieron guardar las credenciales WiFi"
-        );
+    if (ssid_bytes == 0) {
+        Serial.println("[STORAGE] ERROR: no se pudieron guardar las credenciales WiFi");
         return;
     }
 
-    Serial.printf(
-        "[STORAGE] Credenciales guardadas para: %s\n",
-        ssid.c_str()
-    );
+    Serial.printf("[STORAGE] Credenciales guardadas para: %s\n", ssid.c_str());
 }
 
-bool storage_get_wifi_credentials(
-    String &ssid,
-    String &password
-)
+bool storage_get_wifi_credentials(String &ssid, String &password)
 {
     if (!storage_ready) {
         return false;
@@ -231,62 +333,15 @@ bool storage_get_wifi_credentials(
     return !ssid.isEmpty();
 }
 
-
-bool storage_remove_ticker(size_t index)
+void storage_forget_wifi()
 {
-    if (!storage_ready) {
-        return false;
+    if (storage_ready) {
+        preferences.remove("wifi_ssid");
+        preferences.remove("wifi_pass");
     }
 
-    size_t count = storage_ticker_count();
+    WiFi.disconnect(true, true);
+    WiFi.mode(WIFI_STA);
 
-    if (index >= count) {
-        return false;
-    }
-
-    for (size_t i = index; i + 1 < count; ++i) {
-        char current_key[12];
-        char next_key[12];
-
-        snprintf(current_key, sizeof(current_key), "t%u",
-                 (unsigned int)i);
-        snprintf(next_key, sizeof(next_key), "t%u",
-                 (unsigned int)(i + 1));
-
-        String next = preferences.getString(next_key, "");
-
-        if (next.isEmpty() ||
-            preferences.putString(current_key, next) == 0) {
-            Serial.println("[STORAGE] Error reordenando tickers");
-            return false;
-        }
-    }
-
-    char last_key[12];
-    snprintf(last_key, sizeof(last_key), "t%u",
-             (unsigned int)(count - 1));
-
-    preferences.remove(last_key);
-
-    if (preferences.putUInt("ticker_count", count - 1) == 0) {
-        Serial.println("[STORAGE] Error actualizando contador");
-        return false;
-    }
-
-    Serial.printf("[STORAGE] Ticker del indice %u eliminado\n",
-                  (unsigned int)index);
-
-    return true;
+    Serial.println("[STORAGE] Red WiFi olvidada");
 }
-
-int storage_wifi_status()
-{
-    if (WiFi.status() != WL_CONNECTED) {
-        return STORAGE_WIFI_DISCONNECTED;
-    }
-
-    // La conexion Wi-Fi esta activa. No garantiza por si sola
-    // que haya acceso a Internet.
-    return STORAGE_WIFI_INTERNET;
-}
-

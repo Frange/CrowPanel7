@@ -10,3 +10,5 @@ void detail_quote_update(
     const StockData &data,
     bool available
 );
+
+void detail_quote_reset();

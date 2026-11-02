@@ -5,21 +5,22 @@
 #include <LovyanGFX.hpp>
 #include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
 #include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
+#include <lgfx/v1/platforms/esp32/Light_PWM.hpp>
 #include <lvgl.h>
 #include <esp_heap_caps.h>
 
 #include "display_config.h"
+#include "services/settings_service.h"
 
-#if LV_INDEV_DEF_READ_PERIOD == 10
-#pragma message("LVGL: intervalo tactil configurado a 10 ms")
-#else
-#pragma message("LVGL: se esta usando otro intervalo tactil")
+#if LV_COLOR_16_SWAP == 0
+#error "LV_COLOR_16_SWAP debe ser 1: el panel RGB espera RGB565 con bytes intercambiados"
 #endif
 
 class LGFX : public lgfx::LGFX_Device {
 public:
-    lgfx::Panel_RGB _panel_instance;
-    lgfx::Bus_RGB   _bus_instance;
+    lgfx::Panel_RGB  _panel_instance;
+    lgfx::Bus_RGB    _bus_instance;
+    lgfx::Light_PWM  _light_instance;
 
     LGFX() {
         {
@@ -84,12 +85,24 @@ public:
             _panel_instance.config(cfg);
         }
 
+        {
+            // Retroiluminacion por PWM en GPIO2 (permite regular el brillo).
+            auto cfg = _light_instance.config();
+            cfg.pin_bl      = GPIO_NUM_2;
+            cfg.freq        = 12000;
+            cfg.pwm_channel = 7;
+            cfg.invert      = false;
+            _light_instance.config(cfg);
+            _panel_instance.setLight(&_light_instance);
+        }
+
         _panel_instance.setBus(&_bus_instance);
         setPanel(&_panel_instance);
     }
 };
 
 static LGFX lcd;
+static uint8_t current_brightness = 255;
 
 // ---------------------------------------------------------------------------
 // PCA9557 (expansor de la CrowPanel V3.0)
@@ -110,28 +123,19 @@ static bool pca_write(uint8_t reg, uint8_t value) {
 static uint8_t gt_addr = 0x5D;
 static bool    gt_ok   = false;
 
-
 static bool gt_read(uint16_t reg, uint8_t *buf, size_t len) {
     if (buf == nullptr || len == 0) {
         return false;
     }
 
-    // Seleccionar el registro del GT911 y finalizar la transmisión.
     Wire.beginTransmission(gt_addr);
     Wire.write((uint8_t)(reg >> 8));
     Wire.write((uint8_t)(reg & 0xFF));
 
-    uint8_t err = Wire.endTransmission(true);
-
-    if (err != 0) {
-        Serial.printf(
-            "[I2C] Error seleccionando registro 0x%04X: %u\n",
-            reg, err
-        );
+    if (Wire.endTransmission(true) != 0) {
         return false;
     }
 
-    // Leer los datos en una transacción independiente.
     size_t received = Wire.requestFrom(
         (uint8_t)gt_addr,
         len,
@@ -142,26 +146,13 @@ static bool gt_read(uint16_t reg, uint8_t *buf, size_t len) {
         while (Wire.available()) {
             Wire.read();
         }
-
-        Serial.printf(
-            "[I2C] Lectura incompleta reg=0x%04X "
-            "recibidos=%u esperados=%u\n",
-            reg,
-            (unsigned int)received,
-            (unsigned int)len
-        );
         return false;
     }
 
     for (size_t i = 0; i < len; i++) {
         if (!Wire.available()) {
-            Serial.printf(
-                "[I2C] Datos insuficientes en registro 0x%04X\n",
-                reg
-            );
             return false;
         }
-
         buf[i] = (uint8_t)Wire.read();
     }
 
@@ -195,13 +186,13 @@ static void i2c_scan() {
 static void touch_reset(uint8_t rst_mask, bool int_high) {
     const uint8_t int_mask = (rst_mask == 0x01) ? 0x02 : 0x01;
 
-    pca_write(0x03, 0x00);                                  // todos salida
-    pca_write(0x01, int_high ? int_mask : 0x00);            // RST bajo, INT segun direccion
+    pca_write(0x03, 0x00);                                    // todos salida
+    pca_write(0x01, int_high ? int_mask : 0x00);              // RST bajo
     delay(20);
     pca_write(0x01, (int_high ? int_mask : 0x00) | rst_mask); // liberar RST
     delay(10);
-    pca_write(0x03, int_mask);                              // INT pasa a entrada
-    delay(150);                                             // GT911 necesita tiempo
+    pca_write(0x03, int_mask);                                // INT a entrada
+    delay(150);                                               // GT911 necesita tiempo
 }
 
 static bool gt_probe() {
@@ -225,15 +216,6 @@ static bool gt_init() {
             if (gt_probe()) {
                 uint8_t id[4] = {0};
                 gt_read(0x8140, id, 4);
-
-                // Volcado de la configuracion del chip
-                uint8_t c[6] = {0};
-                if (gt_read(0x8047, c, 6)) {
-
-                } else {
-                    Serial.println("[TOUCH] No pude leer la configuracion");
-                }
-
                 gt_write8(0x814E, 0);   // limpiar flag inicial
                 return true;
             }
@@ -248,8 +230,11 @@ static bool gt_init() {
 // LVGL
 // ---------------------------------------------------------------------------
 static lv_disp_draw_buf_t draw_buf;
-static lv_color_t *buf1 = nullptr;
-static lv_color_t *buf2 = nullptr;
+static lv_color_t *draw_buffer = nullptr;
+
+// Lineas del buffer de dibujo. El volcado es sincrono (memcpy al framebuffer
+// en PSRAM), asi que un unico buffer grande rinde mejor que dos pequenos.
+static constexpr int DRAW_BUFFER_LINES = 50;
 
 static void disp_flush(
     lv_disp_drv_t *disp,
@@ -259,12 +244,14 @@ static void disp_flush(
     const int32_t w = area->x2 - area->x1 + 1;
     const int32_t h = area->y2 - area->y1 + 1;
 
+    // swap565_t coincide con el formato del framebuffer del panel RGB,
+    // por lo que LovyanGFX copia las lineas con memcpy sin convertir.
     lcd.pushImage(
         area->x1,
         area->y1,
         w,
         h,
-        reinterpret_cast<const lgfx::rgb565_t *>(color_p)
+        reinterpret_cast<const lgfx::swap565_t *>(color_p)
     );
 
     lv_disp_flush_ready(disp);
@@ -281,18 +268,6 @@ static void touchpad_read(
     bool touched = false;
 
     display_get_touch(&x, &y, &touched);
-
-    static bool last_touched = false;
-
-    if (touched != last_touched) {
-        Serial.printf(
-            "[TOUCHPAD] %s x=%d y=%d\n",
-            touched ? "PULSADO" : "LIBERADO",
-            x,
-            y
-        );
-        last_touched = touched;
-    }
 
     data->state = touched
         ? LV_INDEV_STATE_PR
@@ -314,44 +289,37 @@ void display_init() {
 
     i2c_scan();
 
-    pinMode(2, OUTPUT);
-    digitalWrite(2, HIGH);       // backlight
-
     lcd.init();
-    lcd.setBrightness(255);
+    display_set_brightness(settings_get().brightness);
     Serial.println("[LCD] LovyanGFX inicializado");
 
     Serial.println("[TOUCH] Inicializando GT911...");
     gt_ok = gt_init();
 
     if (gt_ok) {
-        // Aumentar la velocidad tras detectar correctamente el GT911.
-        Wire.setClock(200000);
-        Serial.println("[TOUCH] GT911 listo a 200 kHz");
+        // El GT911 soporta I2C fast mode una vez detectado.
+        Wire.setClock(400000);
+        Serial.println("[TOUCH] GT911 listo a 400 kHz");
     } else {
         Serial.println("[TOUCH] No se pudo inicializar el GT911");
         i2c_scan();
     }
 
-    Serial.println("[TOUCH] Inicializacion terminada");
-
     lv_init();
 
-    // Buffers LVGL en RAM interna
-    constexpr size_t buffer_pixels = static_cast<size_t>(SCREEN_WIDTH) * 20;
-    constexpr size_t buffer_bytes  = buffer_pixels * sizeof(lv_color_t);
+    constexpr size_t buffer_pixels =
+        static_cast<size_t>(SCREEN_WIDTH) * DRAW_BUFFER_LINES;
+    constexpr size_t buffer_bytes = buffer_pixels * sizeof(lv_color_t);
 
-    buf1 = static_cast<lv_color_t *>(
-        heap_caps_malloc(buffer_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-    buf2 = static_cast<lv_color_t *>(
+    draw_buffer = static_cast<lv_color_t *>(
         heap_caps_malloc(buffer_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 
-    if (buf1 == nullptr || buf2 == nullptr) {
+    if (draw_buffer == nullptr) {
         Serial.println("[LCD] ERROR: memoria insuficiente para LVGL");
         return;
     }
 
-    lv_disp_draw_buf_init(&draw_buf, buf1, buf2, buffer_pixels);
+    lv_disp_draw_buf_init(&draw_buf, draw_buffer, nullptr, buffer_pixels);
 
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
@@ -361,15 +329,26 @@ void display_init() {
     disp_drv.draw_buf = &draw_buf;
     lv_disp_drv_register(&disp_drv);
 
-static lv_indev_drv_t indev_drv;
-lv_indev_drv_init(&indev_drv);
+    static lv_indev_drv_t indev_drv;
+    lv_indev_drv_init(&indev_drv);
+    indev_drv.type    = LV_INDEV_TYPE_POINTER;
+    indev_drv.read_cb = touchpad_read;
+    lv_indev_drv_register(&indev_drv);
 
-indev_drv.type = LV_INDEV_TYPE_POINTER;
-indev_drv.read_cb = touchpad_read;
+    Serial.printf(
+        "[LCD] LVGL registrado (buffer %d lineas, %u KB)\n",
+        DRAW_BUFFER_LINES,
+        static_cast<unsigned int>(buffer_bytes / 1024)
+    );
+}
 
-lv_indev_drv_register(&indev_drv);
+void display_set_brightness(uint8_t value) {
+    current_brightness = value;
+    lcd.setBrightness(value);
+}
 
-    Serial.println("[LCD] Display y Tactil LVGL registrados");
+uint8_t display_get_brightness() {
+    return current_brightness;
 }
 
 // ---------------------------------------------------------------------------
@@ -384,22 +363,14 @@ void display_get_touch(
         return;
     }
 
-    static int16_t  lx = 0, ly = 0;
-    static bool     pressed = false;
-    static uint8_t  last_st = 0xFF;
-    static uint32_t last_hb = 0;
-    static uint32_t read_fail = 0, read_ok = 0;
+    static int16_t lx = 0, ly = 0;
+    static bool    pressed = false;
 
     if (gt_ok) {
         uint8_t b[8] = {0};
 
         if (gt_read(0x814E, b, 8)) {
-            read_ok++;
             const uint8_t st = b[0];
-
-            if (st != last_st) {
-                last_st = st;
-            }
 
             if (st & 0x80) {
                 const uint8_t n = st & 0x0F;
@@ -419,13 +390,7 @@ void display_get_touch(
 
                 gt_write8(0x814E, 0);
             }
-        } else {
-            read_fail++;
         }
-    }
-
-    if (millis() - last_hb > 3000) {
-        last_hb = millis();
     }
 
     *x = lx;

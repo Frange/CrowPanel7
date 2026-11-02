@@ -1,13 +1,44 @@
-
 #include <Arduino.h>
 #include <WiFi.h>
 #include <math.h>
+#include <stdio.h>
 
 #include "screen_list_internal.h"
-#include "screen_list_data.h"
 
 #include "../../../services/storage_service.h"
 #include "../../../services/market_service.h"
+#include "../../../services/settings_service.h"
+
+namespace {
+
+void format_price(
+    char *out,
+    size_t size,
+    float value,
+    const String &currency)
+{
+    if (!isfinite(value)) {
+        snprintf(out, size, "--");
+    } else if (!currency.isEmpty()) {
+        snprintf(out, size, "%.2f %s", value, currency.c_str());
+    } else {
+        snprintf(out, size, "%.2f", value);
+    }
+}
+
+void set_row_placeholder(ScreenListState &state, size_t i)
+{
+    screen_list_set_text(state.price_labels[i], "--");
+    screen_list_set_text(state.open_labels[i], "--");
+    screen_list_set_text(state.close_labels[i], "--");
+    screen_list_set_text(state.change_labels[i], "--");
+
+    lv_obj_set_style_text_color(
+        state.change_labels[i], lv_color_hex(0xAAAAAA), 0
+    );
+}
+
+} // namespace
 
 void screen_list_update_wifi_indicator()
 {
@@ -17,43 +48,24 @@ void screen_list_update_wifi_indicator()
         return;
     }
 
-    bool connected = WiFi.status() == WL_CONNECTED;
+    int connected = WiFi.status() == WL_CONNECTED ? 1 : 0;
+
+    if (connected == state.painted_wifi) {
+        return;
+    }
+
+    state.painted_wifi = connected;
 
     if (connected) {
-        lv_label_set_text(
-            state.wifi_indicator,
-            LV_SYMBOL_WIFI " Conectado"
-        );
-
+        lv_label_set_text(state.wifi_indicator, LV_SYMBOL_WIFI " Conectado");
         lv_obj_set_style_text_color(
-            state.wifi_indicator,
-            lv_color_hex(0x55DD88),
-            0
+            state.wifi_indicator, lv_color_hex(0x55DD88), 0
         );
-
-        // Solicitar cotizaciones al detectar la conexión.
-        if (!state.wifi_was_connected) {
-            state.wifi_was_connected = true;
-
-            Serial.println(
-                "[LIST] WiFi conectado; solicitando cotizaciones"
-            );
-
-            market_service_request_refresh();
-        }
     } else {
-        lv_label_set_text(
-            state.wifi_indicator,
-            LV_SYMBOL_WIFI " Sin WiFi"
-        );
-
+        lv_label_set_text(state.wifi_indicator, LV_SYMBOL_WIFI " Sin WiFi");
         lv_obj_set_style_text_color(
-            state.wifi_indicator,
-            lv_color_hex(0xFFCC66),
-            0
+            state.wifi_indicator, lv_color_hex(0xFFCC66), 0
         );
-
-        state.wifi_was_connected = false;
     }
 }
 
@@ -65,22 +77,41 @@ void screen_list_refresh_status()
         return;
     }
 
+    char text[96];
+
     if (WiFi.status() != WL_CONNECTED) {
-        lv_label_set_text(
-            state.refresh_status,
-            "Sin conexion WiFi"
-        );
+        snprintf(text, sizeof(text), "Sin conexion WiFi");
     } else if (market_service_is_busy()) {
-        lv_label_set_text(
-            state.refresh_status,
-            "Actualizando cotizaciones..."
-        );
+        snprintf(text, sizeof(text), "Actualizando cotizaciones...");
     } else {
-        lv_label_set_text(
-            state.refresh_status,
-            "Actualizacion automatica cada 5 min"
-        );
+        uint32_t last = market_service_last_refresh_ms();
+        unsigned int every = settings_get().refresh_minutes;
+
+        if (last == 0) {
+            snprintf(
+                text, sizeof(text),
+                "Actualizacion automatica cada %u min", every
+            );
+        } else {
+            uint32_t ago_s = (millis() - last) / 1000;
+
+            if (ago_s < 60) {
+                snprintf(
+                    text, sizeof(text),
+                    "Actualizado hace %lu s  -  automatico cada %u min",
+                    (unsigned long)ago_s, every
+                );
+            } else {
+                snprintf(
+                    text, sizeof(text),
+                    "Actualizado hace %lu min  -  automatico cada %u min",
+                    (unsigned long)(ago_s / 60), every
+                );
+            }
+        }
     }
+
+    screen_list_set_text(state.refresh_status, text);
 }
 
 void screen_list_update_rows()
@@ -94,12 +125,11 @@ void screen_list_update_rows()
     }
 
     for (size_t i = 0; i < MAX_ROWS; ++i) {
-        if (state.ticker_labels[i] == nullptr) {
+        lv_obj_t *row = state.rows[i];
+
+        if (row == nullptr) {
             continue;
         }
-
-        lv_obj_t *row =
-            lv_obj_get_parent(state.ticker_labels[i]);
 
         if (i >= count) {
             lv_obj_add_flag(row, LV_OBJ_FLAG_HIDDEN);
@@ -109,205 +139,65 @@ void screen_list_update_rows()
         lv_obj_clear_flag(row, LV_OBJ_FLAG_HIDDEN);
 
         String symbol = storage_get_ticker(i);
+        screen_list_set_text(state.ticker_labels[i], symbol.c_str());
+
         StockData data = {};
 
         if (symbol.isEmpty() ||
-            !market_service_get_data(symbol, data)) {
-
-            lv_label_set_text(
-                state.ticker_labels[i],
-                symbol.c_str()
-            );
-            lv_label_set_text(state.price_labels[i], "--");
-            lv_label_set_text(state.open_labels[i], "--");
-            lv_label_set_text(state.close_labels[i], "--");
-            lv_label_set_text(state.change_labels[i], "--");
-
-            if (state.change_amount_labels[i] != nullptr) {
-                lv_label_set_text(
-                    state.change_amount_labels[i],
-                    "--"
-                );
-            }
-
+            !market_service_get_data(symbol, data) ||
+            !data.valid) {
+            set_row_placeholder(state, i);
             continue;
         }
 
-        lv_label_set_text(
-            state.ticker_labels[i],
-            symbol.c_str()
-        );
+        char text[48];
 
-        char price_text[64];
-        char open_text[64];
-        char close_text[64];
-        char change_text[32];
-        char amount_text[64];
+        format_price(text, sizeof(text), data.price, data.currency);
+        screen_list_set_text(state.price_labels[i], text);
 
-        // --------------------------------------------------
-        // Precio actual
-        // --------------------------------------------------
-        if (isfinite(data.price)) {
+        format_price(text, sizeof(text), data.open, data.currency);
+        screen_list_set_text(state.open_labels[i], text);
+
+        format_price(text, sizeof(text), data.previous_close, data.currency);
+        screen_list_set_text(state.close_labels[i], text);
+
+        // Variacion monetaria y porcentual en una sola linea.
+        if (isfinite(data.change) && isfinite(data.change_percent)) {
             if (!data.currency.isEmpty()) {
                 snprintf(
-                    price_text,
-                    sizeof(price_text),
-                    "%.2f %s",
-                    data.price,
-                    data.currency.c_str()
+                    text, sizeof(text), "%+.2f %s (%+.2f%%)",
+                    data.change, data.currency.c_str(), data.change_percent
                 );
             } else {
                 snprintf(
-                    price_text,
-                    sizeof(price_text),
-                    "%.2f",
-                    data.price
+                    text, sizeof(text), "%+.2f (%+.2f%%)",
+                    data.change, data.change_percent
                 );
             }
+
+            screen_list_set_text(state.change_labels[i], text);
+
+            uint32_t color =
+                data.change > 0.001f ? 0x55DD88 :
+                data.change < -0.001f ? 0xFF6666 :
+                0xCCCCCC;
+
+            lv_obj_set_style_text_color(
+                state.change_labels[i], lv_color_hex(color), 0
+            );
         } else {
-            snprintf(price_text, sizeof(price_text), "--");
+            screen_list_set_text(state.change_labels[i], "--");
+            lv_obj_set_style_text_color(
+                state.change_labels[i], lv_color_hex(0xAAAAAA), 0
+            );
         }
-
-        // --------------------------------------------------
-        // Precio de apertura
-        // --------------------------------------------------
-        if (isfinite(data.open)) {
-            if (!data.currency.isEmpty()) {
-                snprintf(
-                    open_text,
-                    sizeof(open_text),
-                    "%.2f %s",
-                    data.open,
-                    data.currency.c_str()
-                );
-            } else {
-                snprintf(
-                    open_text,
-                    sizeof(open_text),
-                    "%.2f",
-                    data.open
-                );
-            }
-        } else {
-            snprintf(open_text, sizeof(open_text), "--");
-        }
-
-        // --------------------------------------------------
-        // Cierre anterior
-        // --------------------------------------------------
-        if (isfinite(data.previous_close)) {
-            if (!data.currency.isEmpty()) {
-                snprintf(
-                    close_text,
-                    sizeof(close_text),
-                    "%.2f %s",
-                    data.previous_close,
-                    data.currency.c_str()
-                );
-            } else {
-                snprintf(
-                    close_text,
-                    sizeof(close_text),
-                    "%.2f",
-                    data.previous_close
-                );
-            }
-        } else {
-            snprintf(close_text, sizeof(close_text), "--");
-        }
-
-        lv_label_set_text(
-            state.price_labels[i],
-            price_text
-        );
-
-        lv_label_set_text(
-            state.open_labels[i],
-            open_text
-        );
-
-        lv_label_set_text(
-            state.close_labels[i],
-            close_text
-        );
-
-        // --------------------------------------------------
-// Variación monetaria y porcentual en una sola línea
-// --------------------------------------------------
-if (isfinite(data.change_percent) &&
-    isfinite(data.price) &&
-    isfinite(data.previous_close)) {
-
-    const float difference =
-        data.price - data.previous_close;
-
-    if (!data.currency.isEmpty()) {
-        snprintf(
-            change_text,
-            sizeof(change_text),
-            "%+.2f %s (%+.2f%%)",
-            difference,
-            data.currency.c_str(),
-            data.change_percent
-        );
-    } else {
-        snprintf(
-            change_text,
-            sizeof(change_text),
-            "%+.2f (%+.2f%%)",
-            difference,
-            data.change_percent
-        );
     }
 
-    lv_label_set_text(
-        state.change_labels[i],
-        change_text
-    );
-
-    uint32_t color =
-        difference > 0.001f
-            ? 0x55DD88
-            : difference < -0.001f
-                ? 0xFF6666
-                : 0xCCCCCC;
-
-    lv_obj_set_style_text_color(
-        state.change_labels[i],
-        lv_color_hex(color),
-        0
-    );
-
-} else {
-    lv_label_set_text(
-        state.change_labels[i],
-        "--"
-    );
-
-    lv_obj_set_style_text_color(
-        state.change_labels[i],
-        lv_color_hex(0xAAAAAA),
-        0
-    );
-}
-    }
-
-    // --------------------------------------------------
-    // Mensaje cuando no hay valores guardados
-    // --------------------------------------------------
     if (state.empty_label != nullptr) {
         if (count == 0) {
-            lv_obj_clear_flag(
-                state.empty_label,
-                LV_OBJ_FLAG_HIDDEN
-            );
+            lv_obj_clear_flag(state.empty_label, LV_OBJ_FLAG_HIDDEN);
         } else {
-            lv_obj_add_flag(
-                state.empty_label,
-                LV_OBJ_FLAG_HIDDEN
-            );
+            lv_obj_add_flag(state.empty_label, LV_OBJ_FLAG_HIDDEN);
         }
     }
-
-    screen_list_refresh_status();
 }
